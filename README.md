@@ -60,18 +60,19 @@ Rebuild unpacked folder only (no NSIS installer):
 npm run pack:dir
 ```
 
-## Build Windows installer (optional)
+## Public download (company launch)
 
-NSIS can fail on Windows without Developer Mode because of `winCodeSign` symlink extraction.
+Portable Windows build:
 
 ```powershell
-$env:CSC_IDENTITY_AUTO_DISCOVERY="false"
-npm run electron:build
+npm run pack:release
 ```
 
-Installer output (when successful):
+Artifact: `artifacts/Resume-Studio-win-x64-<version>.rsz` (ZIP bytes; rename to `.zip` to extract).
 
-`release\Resume-Studio-Setup-1.0.0.exe`
+Publish + website deploy steps: see [LAUNCH.md](LAUNCH.md).
+Marketing site: `D:\MyProjects\resume-studio-web`
+LinkedIn kit: `D:\MyProjects\resume-studio-web\LINKEDIN.md`
 
 ## Workspace layout
 

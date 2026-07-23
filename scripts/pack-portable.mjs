@@ -1,7 +1,6 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { execFileSync } from 'node:child_process'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'))
@@ -82,40 +81,5 @@ Windows may warn about an unsigned app — choose More info → Run anyway.
 `,
 )
 
-const outDir = path.join(root, 'release', 'dist')
-fs.mkdirSync(outDir, { recursive: true })
-const zipName = `Resume-Studio-win-x64-${version}.zip`
-const zipPath = path.join(outDir, zipName)
-if (fs.existsSync(zipPath)) fs.unlinkSync(zipPath)
-
-const ps = `
-$ErrorActionPreference = 'Stop'
-Compress-Archive -Path '${appDir.replace(/'/g, "''")}' -DestinationPath '${zipPath.replace(/'/g, "''")}' -Force
-`
-execFileSync('powershell.exe', ['-NoProfile', '-Command', ps], { stdio: 'inherit' })
-
-const stat = fs.statSync(zipPath)
-const sha = execFileSync(
-  'powershell.exe',
-  ['-NoProfile', '-Command', `(Get-FileHash -Algorithm SHA256 '${zipPath.replace(/'/g, "''")}').Hash`],
-  { encoding: 'utf8' },
-).trim()
-
-const meta = {
-  name: 'Resume Studio',
-  version,
-  artifact: zipName,
-  path: `release/dist/${zipName}`,
-  sizeBytes: stat.size,
-  sha256: sha,
-  platform: 'win32',
-  arch: 'x64',
-  offer: 'Free · Bring your own API key',
-  createdAt: new Date().toISOString(),
-  downloadUrlHint: `https://github.com/r123singh/resume-studio/releases/download/v${version}/${zipName}`,
-}
-
-fs.writeFileSync(path.join(outDir, 'latest.json'), JSON.stringify(meta, null, 2))
-console.log(`Portable app: ${appDir}`)
-console.log(`Zip: ${zipPath} (${stat.size} bytes)`)
-console.log(`SHA256: ${sha}`)
+console.log(`Portable app ready: ${appDir}`)
+console.log('Next: node scripts/make-zip.mjs')
