@@ -7,7 +7,7 @@ Set-Location $root
 
 $asset = Join-Path $root "artifacts\Resume-Studio-win-x64-1.0.0.rsz"
 if (-not (Test-Path $asset)) {
-  throw "Missing $asset — run npm run pack:release / node scripts/make-zip.mjs first"
+  throw "Missing $asset - run npm run pack:release / node scripts/make-zip.mjs first"
 }
 
 if (-not (Get-Command gh -ErrorAction SilentlyContinue)) {
