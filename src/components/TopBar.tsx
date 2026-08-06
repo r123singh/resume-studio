@@ -3,9 +3,13 @@ type Props = {
   onOpenFolder: () => void
   onSave: () => void
   onExport: () => void
+  onApplyKit: () => void
+  onInterviewPrep: () => void
   onSettings: () => void
   canSave: boolean
   canExport: boolean
+  canApplyKit: boolean
+  canInterviewPrep: boolean
   status?: string
   busy?: boolean
 }
@@ -15,9 +19,13 @@ export function TopBar({
   onOpenFolder,
   onSave,
   onExport,
+  onApplyKit,
+  onInterviewPrep,
   onSettings,
   canSave,
   canExport,
+  canApplyKit,
+  canInterviewPrep,
   status,
   busy,
 }: Props) {
@@ -38,8 +46,26 @@ export function TopBar({
         <button type="button" className="btn ghost" onClick={onSave} disabled={!canSave}>
           Save
         </button>
-        <button type="button" className="btn primary" onClick={onExport} disabled={!canExport}>
+        <button type="button" className="btn ghost" onClick={onExport} disabled={!canExport}>
           Export PDF
+        </button>
+        <button
+          type="button"
+          className="btn ghost"
+          onClick={onApplyKit}
+          disabled={!canApplyKit}
+          title="Build resume PDF + cover letter + snippets + checklist"
+        >
+          Apply kit
+        </button>
+        <button
+          type="button"
+          className="btn primary"
+          onClick={onInterviewPrep}
+          disabled={!canInterviewPrep}
+          title="Generate interview prep from open resume + JD context"
+        >
+          Interview prep
         </button>
         <button type="button" className="btn ghost" onClick={onSettings}>
           Settings

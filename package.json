@@ -49,6 +49,7 @@
     }
   },
   "dependencies": {
+    "@cursor/sdk": "^1.0.26",
     "@monaco-editor/react": "^4.7.0",
     "marked": "^15.0.7",
     "monaco-editor": "^0.52.2",

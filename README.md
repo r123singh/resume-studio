@@ -2,7 +2,7 @@
 
 Cursor-like AI editor for **resume tailoring** on Windows. Open a workspace, edit markdown resumes, paste a job description to generate a tailored file, refine with chat, and export PDF.
 
-Uses **bring-your-own API keys** (OpenAI, Anthropic, or Gemini). Keys are stored encrypted locally via Electron `safeStorage`.
+Uses **NVIDIA NIM** (free) or **Cursor SDK** by default. Paid OpenAI / Anthropic / Gemini keys remain optional. Keys are stored encrypted locally via Electron `safeStorage`.
 
 ## Features (v1)
 
@@ -11,13 +11,18 @@ Uses **bring-your-own API keys** (OpenAI, Anthropic, or Gemini). Keys are stored
 - **Tailor from JD** → writes `resumes/{company}--{role}.md`
 - **Edit open file** chat (full rewrite or selection replace)
 - **Export PDF** via Chromium print-to-PDF
-- Windows installer (`Resume-Studio-Setup-*.exe`)
+- Free providers: NVIDIA NIM + Cursor SDK; paid providers optional
+- **Apply kit** → `apply-kits/{company}--{role}/` with resume PDF, cover letter, form snippets, checklist + `applications.csv` log
+- **Tracker** tab → filter applications, mark applied/skipped, open job URL or kit folder
+- **Hunt** tab → search RemoteOK + Remotive, rank vs `job-preferences.md`, prepare selected → tailor + apply kit
+- **Interview prep** → from open tailored resume or Tracker row → `interview-prep/{company}--{role}.md`
 
 ## Prerequisites (development)
 
 - Node.js 20+
 - Windows 10/11
-- An API key from OpenAI, Anthropic, or Google Gemini
+- An API key from [build.nvidia.com](https://build.nvidia.com) (recommended) and/or a Cursor API key
+- Optional: OpenAI / Anthropic / Gemini keys
 
 ## Develop
 
@@ -33,12 +38,15 @@ npm run dev
 
 ## First-run flow
 
-1. Launch the app → **Add API key** in Settings (choose provider + model).
+1. Launch the app → **Settings**:
+   - Default: **NVIDIA NIM** — get a free key at [build.nvidia.com](https://build.nvidia.com)
+   - Or **Cursor SDK** — paste your `CURSOR_API_KEY` / service account key
+   - Optional: expand paid providers (OpenAI / Anthropic / Gemini)
 2. **Open workspace folder** (new or existing). The app creates `base-resume.md` and `resumes/` if missing.
 3. Paste your master resume into `base-resume.md` and Save (`Ctrl+S`).
-4. In **Tailor from JD**: company, role, paste JD → **Generate tailored resume**.
-5. Optionally switch to **Edit open file** for refinements.
-6. **Export PDF** and upload to the ATS yourself.
+4. In **Tailor from JD**: company, role, paste JD → **Generate tailored resume** (also builds Apply kit).
+5. Or open any tailored resume and click **Apply kit**.
+6. Use the kit folder to apply manually in the ATS; update `applications.csv` when submitted.
 
 ## Run without installer (recommended for now)
 
@@ -78,10 +86,20 @@ LinkedIn kit: `D:\MyProjects\resume-studio-web\LINKEDIN.md`
 
 ```
 your-job-folder/
-  base-resume.md          # facts source of truth
+  base-resume.md
+  job-preferences.md
+  applications.csv
   resumes/
     simpplr--senior-pm-ai-products.md
-    ...
+  apply-kits/
+    simpplr--senior-pm-ai-products/
+      resume.md
+      resume.pdf
+      cover-letter.md
+      form-snippets.md
+      CHECKLIST.md
+  interview-prep/
+    simpplr--senior-pm-ai-products.md
 ```
 
 You can point Resume Studio at your existing `job-automation` folder.
