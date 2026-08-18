@@ -3,6 +3,7 @@ import {
   FREE_PROVIDERS,
   MODEL_OPTIONS,
   PAID_PROVIDERS,
+  supportsAgentMode,
   type ProviderId,
 } from '../lib/ai/providers'
 
@@ -13,10 +14,21 @@ type Props = {
 const PROVIDER_LABELS: Record<ProviderId, string> = {
   nvidia: 'NVIDIA NIM (free)',
   cursor: 'Cursor SDK',
+  bedrock: 'Amazon Bedrock',
   openai: 'OpenAI',
   anthropic: 'Anthropic',
   gemini: 'Gemini',
 }
+
+const AWS_REGIONS = [
+  'us-east-1',
+  'us-west-2',
+  'eu-west-1',
+  'eu-central-1',
+  'ap-south-1',
+  'ap-southeast-2',
+  'ap-northeast-1',
+]
 
 export function SettingsModal({ onClose }: Props) {
   const [provider, setProvider] = useState<ProviderId>('nvidia')
@@ -26,14 +38,22 @@ export function SettingsModal({ onClose }: Props) {
   const [openaiKey, setOpenaiKey] = useState('')
   const [anthropicKey, setAnthropicKey] = useState('')
   const [geminiKey, setGeminiKey] = useState('')
+  const [bedrockKey, setBedrockKey] = useState('')
+  const [awsRegion, setAwsRegion] = useState('us-east-1')
+  const [agentMode, setAgentMode] = useState(true)
   const [flags, setFlags] = useState({
     nvidia: false,
     cursor: false,
     openai: false,
     anthropic: false,
     gemini: false,
+    bedrock: false,
   })
   const [showPaid, setShowPaid] = useState(false)
+  const [allowExternalAi, setAllowExternalAi] = useState(true)
+  const [redactPii, setRedactPii] = useState(false)
+  const [confirmLargeEdits, setConfirmLargeEdits] = useState(true)
+  const [allowWebResearch, setAllowWebResearch] = useState(false)
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState('')
 
@@ -48,10 +68,25 @@ export function SettingsModal({ onClose }: Props) {
         openai: s.hasOpenAI,
         anthropic: s.hasAnthropic,
         gemini: s.hasGemini,
+        bedrock: s.hasBedrock,
       })
+      setAwsRegion(s.awsRegion || 'us-east-1')
+      setAgentMode(s.agentMode !== false)
+      setAllowExternalAi(s.allowExternalAi !== false)
+      setRedactPii(Boolean(s.redactPii))
+      setConfirmLargeEdits(s.confirmLargeEdits !== false)
+      setAllowWebResearch(Boolean(s.allowWebResearch))
       if (PAID_PROVIDERS.includes(s.provider)) setShowPaid(true)
     })()
   }, [])
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose])
 
   useEffect(() => {
     const models = MODEL_OPTIONS[provider]
@@ -70,6 +105,13 @@ export function SettingsModal({ onClose }: Props) {
         openaiKey: openaiKey.trim() || undefined,
         anthropicKey: anthropicKey.trim() || undefined,
         geminiKey: geminiKey.trim() || undefined,
+        bedrockKey: bedrockKey.trim() || undefined,
+        awsRegion,
+        agentMode,
+        allowExternalAi,
+        redactPii,
+        confirmLargeEdits,
+        allowWebResearch,
       })
       const s = await window.resumeStudio.getSettings()
       setFlags({
@@ -78,12 +120,14 @@ export function SettingsModal({ onClose }: Props) {
         openai: s.hasOpenAI,
         anthropic: s.hasAnthropic,
         gemini: s.hasGemini,
+        bedrock: s.hasBedrock,
       })
       setNvidiaKey('')
       setCursorKey('')
       setOpenaiKey('')
       setAnthropicKey('')
       setGeminiKey('')
+      setBedrockKey('')
       setMessage('Saved. Keys are stored encrypted on this machine.')
     } catch (err) {
       setMessage(err instanceof Error ? err.message : String(err))
@@ -93,8 +137,14 @@ export function SettingsModal({ onClose }: Props) {
   }
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
+    <div className="modal-backdrop" onClick={onClose} role="presentation">
+      <div
+        className="modal"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Settings"
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="modal-header">
           <h2>Settings</h2>
           <button type="button" className="btn ghost" onClick={onClose}>
@@ -140,6 +190,71 @@ export function SettingsModal({ onClose }: Props) {
           </select>
         </label>
 
+        <fieldset className="privacy-fieldset">
+          <legend>Agent</legend>
+          <label className="check-row">
+            <input
+              type="checkbox"
+              checked={agentMode}
+              disabled={!supportsAgentMode(provider)}
+              onChange={(e) => setAgentMode(e.target.checked)}
+            />
+            <span>
+              Agent mode — the model reads your files, researches the job, and plans edits with
+              tools instead of a single prompt
+            </span>
+          </label>
+          {supportsAgentMode(provider) ? (
+            <p className="muted small">
+              Proposed edits are never written directly. You review a diff before anything changes.
+            </p>
+          ) : (
+            <p className="muted small">
+              {PROVIDER_LABELS[provider]} returns finished text with no tool calls, so agent mode is
+              unavailable. Pick Bedrock, NVIDIA, OpenAI, Anthropic, or Gemini to enable it.
+            </p>
+          )}
+        </fieldset>
+
+        <fieldset className="privacy-fieldset">
+          <legend>Privacy & safety</legend>
+          <label className="check-row">
+            <input
+              type="checkbox"
+              checked={allowExternalAi}
+              onChange={(e) => setAllowExternalAi(e.target.checked)}
+            />
+            <span>Allow external AI (NVIDIA / Cursor / paid providers)</span>
+          </label>
+          <label className="check-row">
+            <input
+              type="checkbox"
+              checked={redactPii}
+              onChange={(e) => setRedactPii(e.target.checked)}
+            />
+            <span>Redact email / phone / LinkedIn from prompts before send</span>
+          </label>
+          <label className="check-row">
+            <input
+              type="checkbox"
+              checked={confirmLargeEdits}
+              onChange={(e) => setConfirmLargeEdits(e.target.checked)}
+            />
+            <span>Require diff preview before applying large AI edits</span>
+          </label>
+          <label className="check-row">
+            <input
+              type="checkbox"
+              checked={allowWebResearch}
+              onChange={(e) => setAllowWebResearch(e.target.checked)}
+            />
+            <span>
+              Allow job/company web research (Evidence-Backed Tailor fetches the posting and a few
+              company pages)
+            </span>
+          </label>
+        </fieldset>
+
         {provider === 'nvidia' || flags.nvidia ? (
           <label className="field">
             <span>
@@ -176,6 +291,33 @@ export function SettingsModal({ onClose }: Props) {
         >
           {showPaid ? 'Hide paid providers' : 'Show paid providers (optional)'}
         </button>
+
+        {provider === 'bedrock' || flags.bedrock ? (
+          <>
+            <label className="field">
+              <span>AWS region</span>
+              <select value={awsRegion} onChange={(e) => setAwsRegion(e.target.value)}>
+                {AWS_REGIONS.map((r) => (
+                  <option key={r} value={r}>
+                    {r}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="field">
+              <span>
+                Bedrock API key {flags.bedrock ? '(saved)' : ''} — optional; leave blank to use your
+                AWS credential chain (profile, env vars, SSO)
+              </span>
+              <input
+                type="password"
+                placeholder={flags.bedrock ? '•••••••• (leave blank to keep)' : 'ABSK... (optional)'}
+                value={bedrockKey}
+                onChange={(e) => setBedrockKey(e.target.value)}
+              />
+            </label>
+          </>
+        ) : null}
 
         {showPaid ? (
           <>

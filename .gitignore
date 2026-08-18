@@ -1,5 +1,6 @@
 # Artifacts / packaging
 release/
+.ui-shots/
 artifacts/
 *.rsz
 dist
@@ -12,3 +13,7 @@ node_modules
 *.local
 .vscode
 .idea
+
+# Workspace-local AI state (evidence cache, audit log, feedback)
+.resume-studio/
+.ai-feedback.jsonl

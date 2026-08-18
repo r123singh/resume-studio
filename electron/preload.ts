@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron'
+import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
 
 export type TreeNode = {
   name: string
@@ -8,8 +8,10 @@ export type TreeNode = {
   children?: TreeNode[]
 }
 
+export type ProviderId = 'nvidia' | 'cursor' | 'openai' | 'anthropic' | 'gemini' | 'bedrock'
+
 export type PublicSettings = {
-  provider: 'nvidia' | 'cursor' | 'openai' | 'anthropic' | 'gemini'
+  provider: ProviderId
   model: string
   lastWorkspace: string | null
   hasNvidia: boolean
@@ -17,16 +19,74 @@ export type PublicSettings = {
   hasOpenAI: boolean
   hasAnthropic: boolean
   hasGemini: boolean
+  hasBedrock: boolean
+  awsRegion: string
+  agentMode: boolean
+  allowExternalAi: boolean
+  redactPii: boolean
+  confirmLargeEdits: boolean
+  allowWebResearch: boolean
+}
+
+export type AgentToolEvent = {
+  name: string
+  input: Record<string, unknown>
+  status: 'running' | 'ok' | 'error'
+  summary?: string
+}
+
+export type EditProposal = {
+  id: string
+  relativePath: string
+  before: string
+  after: string
+  rationale: string
+  evidence: string[]
+}
+
+export type AgentRunResult = {
+  text: string
+  provider: ProviderId
+  model: string
+  inputTokens: number
+  outputTokens: number
+  turns: number
+  toolCalls: AgentToolEvent[]
+  stopReason: string
+  proposals: EditProposal[]
+}
+
+export type EvidenceSnippet = {
+  id: string
+  sourceUrl: string
+  sourceTitle: string
+  kind: 'job' | 'company' | 'repo' | 'resume'
+  text: string
+  score: number
+}
+
+export type JobContext = {
+  url: string
+  title: string
+  company: string
+  companyUrl: string
+  jobText: string
+  snippets: EvidenceSnippet[]
+  fetchedPages: Array<{ url: string; title: string; chars: number; ok: boolean; error?: string }>
+  cached: boolean
+  fetchedAt: string
 }
 
 export type SecretSettings = {
-  provider: 'nvidia' | 'cursor' | 'openai' | 'anthropic' | 'gemini'
+  provider: ProviderId
   model: string
   nvidiaKey: string
   cursorKey: string
   openaiKey: string
   anthropicKey: string
   geminiKey: string
+  bedrockKey: string
+  awsRegion: string
 }
 
 const api = {
@@ -51,6 +111,13 @@ const api = {
     anthropicKey?: string
     geminiKey?: string
     lastWorkspace?: string | null
+    allowExternalAi?: boolean
+    redactPii?: boolean
+    confirmLargeEdits?: boolean
+    allowWebResearch?: boolean
+    bedrockKey?: string
+    awsRegion?: string
+    agentMode?: boolean
   }): Promise<boolean> => ipcRenderer.invoke('settings:set', patch),
   getSecrets: (): Promise<SecretSettings> => ipcRenderer.invoke('settings:getSecrets'),
   completeChat: (payload: {
@@ -59,6 +126,92 @@ const api = {
     messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>
     workspace: string | null
   }): Promise<string> => ipcRenderer.invoke('ai:complete', payload),
+  streamChat: (payload: {
+    provider: PublicSettings['provider']
+    model: string
+    messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>
+    workspace: string | null
+    onChunk?: (chunk: string) => void
+  }): Promise<{
+    text: string
+    provider: PublicSettings['provider']
+    model: string
+    approxInputTokens: number
+    approxOutputTokens: number
+  }> => {
+    const requestId = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
+    const handler = (_event: IpcRendererEvent, data: { requestId: string; text: string }) => {
+      if (data.requestId !== requestId) return
+      payload.onChunk?.(data.text)
+    }
+    ipcRenderer.on('ai:stream:chunk', handler)
+    return ipcRenderer
+      .invoke('ai:stream', {
+        requestId,
+        provider: payload.provider,
+        model: payload.model,
+        messages: payload.messages,
+        workspace: payload.workspace,
+      })
+      .finally(() => {
+        ipcRenderer.removeListener('ai:stream:chunk', handler)
+      })
+  },
+  runAgent: (payload: {
+    prompt: string
+    history?: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>
+    workspace: string | null
+    activeRelativePath: string | null
+    provider?: ProviderId
+    model?: string
+    maxTurns?: number
+    onText?: (text: string) => void
+    onTool?: (tool: AgentToolEvent) => void
+    onStatus?: (status: string) => void
+  }): Promise<AgentRunResult> & { requestId: string } => {
+    const requestId = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
+    const handler = (
+      _event: IpcRendererEvent,
+      data: {
+        requestId: string
+        kind: 'text' | 'tool' | 'status'
+        text?: string
+        tool?: AgentToolEvent
+        status?: string
+      },
+    ) => {
+      if (data.requestId !== requestId) return
+      if (data.kind === 'text' && data.text) payload.onText?.(data.text)
+      else if (data.kind === 'tool' && data.tool) payload.onTool?.(data.tool)
+      else if (data.kind === 'status' && data.status) payload.onStatus?.(data.status)
+    }
+    ipcRenderer.on('agent:event', handler)
+    const promise = ipcRenderer
+      .invoke('agent:run', {
+        requestId,
+        prompt: payload.prompt,
+        history: payload.history || [],
+        workspace: payload.workspace,
+        activeRelativePath: payload.activeRelativePath,
+        provider: payload.provider,
+        model: payload.model,
+        maxTurns: payload.maxTurns,
+      })
+      .finally(() => {
+        ipcRenderer.removeListener('agent:event', handler)
+      })
+    return Object.assign(promise, { requestId })
+  },
+  cancelAgent: (requestId: string): Promise<boolean> =>
+    ipcRenderer.invoke('agent:cancel', requestId),
+  submitAiFeedback: (payload: {
+    workspace: string
+    rating: 'up' | 'down'
+    note?: string
+    provider?: string
+    model?: string
+    snippet?: string
+  }): Promise<boolean> => ipcRenderer.invoke('ai:feedback', payload),
   exportPdf: (html: string, defaultName: string): Promise<string | null> =>
     ipcRenderer.invoke('pdf:export', { html, defaultName }),
   writePdfToPath: (html: string, filePath: string): Promise<string> =>
@@ -126,6 +279,59 @@ const api = {
   pathJoin: (...parts: string[]): Promise<string> =>
     ipcRenderer.invoke('path:join', ...parts),
   getVersion: (): Promise<string> => ipcRenderer.invoke('app:getVersion'),
+  searchWorkspace: (workspace: string, query: string) =>
+    ipcRenderer.invoke('workspace:search', { workspace, query }) as Promise<
+      Array<{
+        path: string
+        relativePath: string
+        line: number
+        preview: string
+      }>
+    >,
+  gitStatus: (workspace: string) =>
+    ipcRenderer.invoke('git:status', workspace) as Promise<{
+      isRepo: boolean
+      branch: string | null
+      staged: string[]
+      modified: string[]
+      not_added: string[]
+      deleted: string[]
+      conflicted: string[]
+      ahead: number
+      behind: number
+      summary: string
+    }>,
+  gitDiff: (workspace: string) =>
+    ipcRenderer.invoke('git:diff', workspace) as Promise<{
+      staged: string
+      unstaged: string
+    }>,
+  gitCommit: (workspace: string, message: string, paths?: string[]) =>
+    ipcRenderer.invoke('git:commit', { workspace, message, paths }) as Promise<{
+      commit: string
+    }>,
+  gitInit: (workspace: string): Promise<boolean> =>
+    ipcRenderer.invoke('git:init', workspace),
+  fetchJobContext: (payload: {
+    workspace: string | null
+    url: string
+    jobDescription?: string
+    pastedText?: string
+    topK?: number
+    refresh?: boolean
+  }): Promise<JobContext> => ipcRenderer.invoke('research:fetchJobContext', payload),
+  clearEvidenceCache: (workspace: string): Promise<boolean> =>
+    ipcRenderer.invoke('research:clearCache', workspace),
+  recordAiAudit: (payload: {
+    workspace: string
+    action: string
+    provider?: string
+    model?: string
+    jobUrl?: string
+    evidence?: Array<{ id: string; sourceUrl: string; excerpt: string }>
+    promptSnapshot?: string
+    targetFile?: string
+  }): Promise<boolean> => ipcRenderer.invoke('ai:audit', payload),
 }
 
 contextBridge.exposeInMainWorld('resumeStudio', api)

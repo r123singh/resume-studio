@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
+import type { TreeNode } from '../../electron/preload'
+import { RoleSwitcher } from './RoleSwitcher'
 
 export type ApplicationRow = {
   id: number
@@ -291,14 +293,55 @@ function HuntPanel({
   )
 }
 
-/** Side panel with Hunt / Tailor / Edit / Tracker tabs. */
+/** Side panel with Hunt / Tailor / Edit / Tracker / Roles tabs. */
+type AgentToolView = {
+  name: string
+  input: Record<string, unknown>
+  status: 'running' | 'ok' | 'error'
+  summary?: string
+}
+
+type ChatMessageView = {
+  id: string
+  role: 'user' | 'assistant' | 'system'
+  content: string
+  attribution?: string
+  streaming?: boolean
+  feedback?: 'up' | 'down'
+  provider?: string
+  model?: string
+  tools?: AgentToolView[]
+}
+
+const TOOL_LABELS: Record<string, string> = {
+  list_workspace_files: 'Listed workspace files',
+  read_resume_file: 'Read',
+  search_workspace: 'Searched for',
+  research_job: 'Researched job',
+  propose_edit: 'Proposed edit to',
+}
+
+function toolLine(t: AgentToolView): string {
+  const label = TOOL_LABELS[t.name] || t.name
+  const target =
+    (t.input.relativePath as string) ||
+    (t.input.query as string) ||
+    (t.input.url as string) ||
+    (t.input.subdirectory as string) ||
+    ''
+  return [label, target].filter(Boolean).join(' ')
+}
+
 type SideProps = {
-  messages: Array<{ id: string; role: 'user' | 'assistant' | 'system'; content: string }>
+  messages: ChatMessageView[]
   busy: boolean
   applications: ApplicationRow[]
   huntResults: JobListing[]
   huntQuery: string
   huntSelectedIds: Set<string>
+  workspace: string | null
+  tree: TreeNode[]
+  jobDescription: string
   onHuntQueryChange: (q: string) => void
   onHuntSearch: () => void
   onHuntToggle: (id: string) => void
@@ -323,8 +366,36 @@ type SideProps = {
   onOpenJob: (url: string) => void
   onOpenKit: (notes: string) => void
   onInterviewPrepRow?: (row: ApplicationRow) => void
+  onOpenAbsolute?: (absolutePath: string, relativePath: string) => void | Promise<void>
+  onTreeRefresh?: () => void | Promise<void>
+  onFeedback?: (id: string, rating: 'up' | 'down') => void
+  evidenceSlot?: React.ReactNode
   focusTracker?: boolean
   focusHunt?: boolean
+  focusRoles?: boolean
+  focusEvidence?: boolean
+  mode?: PanelMode
+  onModeChange?: (mode: PanelMode) => void
+}
+
+export type PanelMode = 'hunt' | 'tailor' | 'edit' | 'tracker' | 'roles' | 'evidence'
+
+const PANEL_TITLES: Record<PanelMode, string> = {
+  evidence: 'Evidence',
+  hunt: 'Job hunt',
+  tailor: 'Tailor',
+  edit: 'Assistant',
+  tracker: 'Tracker',
+  roles: 'Role variants',
+}
+
+const PANEL_HINTS: Record<PanelMode, string> = {
+  evidence: 'Ctrl+Shift+E',
+  hunt: '',
+  tailor: '',
+  edit: '',
+  tracker: '',
+  roles: '',
 }
 
 export function SidePanel({
@@ -334,6 +405,9 @@ export function SidePanel({
   huntResults,
   huntQuery,
   huntSelectedIds,
+  workspace,
+  tree,
+  jobDescription,
   onHuntQueryChange,
   onHuntSearch,
   onHuntToggle,
@@ -348,10 +422,21 @@ export function SidePanel({
   onOpenJob,
   onOpenKit,
   onInterviewPrepRow,
+  onOpenAbsolute,
+  onTreeRefresh,
+  onFeedback,
+  evidenceSlot,
   focusTracker,
   focusHunt,
+  focusRoles,
+  focusEvidence,
+  mode: controlledMode,
+  onModeChange,
 }: SideProps) {
-  const [mode, setMode] = useState<'hunt' | 'tailor' | 'edit' | 'tracker'>('hunt')
+  const [internalMode, setInternalMode] = useState<PanelMode>('hunt')
+  // Controlled by App when the activity rail drives the panel.
+  const mode = controlledMode ?? internalMode
+  const setMode = onModeChange ?? setInternalMode
   const [company, setCompany] = useState('')
   const [role, setRole] = useState('')
   const [location, setLocation] = useState('')
@@ -368,44 +453,29 @@ export function SidePanel({
   }, [focusHunt])
 
   useEffect(() => {
+    if (focusRoles) setMode('roles')
+  }, [focusRoles])
+
+  useEffect(() => {
+    if (focusEvidence) setMode('evidence')
+  }, [focusEvidence])
+
+  useEffect(() => {
     if (mode === 'tracker') onRefreshApps()
   }, [mode, onRefreshApps])
 
   return (
     <aside className="chat-panel">
-      <div className="pane-header">Workspace</div>
-      <div className="mode-tabs mode-tabs-4">
-        <button
-          type="button"
-          className={mode === 'hunt' ? 'tab active' : 'tab'}
-          onClick={() => setMode('hunt')}
-        >
-          Hunt
-        </button>
-        <button
-          type="button"
-          className={mode === 'tailor' ? 'tab active' : 'tab'}
-          onClick={() => setMode('tailor')}
-        >
-          Tailor
-        </button>
-        <button
-          type="button"
-          className={mode === 'edit' ? 'tab active' : 'tab'}
-          onClick={() => setMode('edit')}
-        >
-          Edit
-        </button>
-        <button
-          type="button"
-          className={mode === 'tracker' ? 'tab active' : 'tab'}
-          onClick={() => setMode('tracker')}
-        >
-          Tracker
-        </button>
+      <div className="pane-header">
+        <span>{PANEL_TITLES[mode]}</span>
+        <span className="pane-header-actions">
+          <span className="pane-hint">{PANEL_HINTS[mode]}</span>
+        </span>
       </div>
 
-      {mode === 'tracker' ? (
+      {mode === 'evidence' ? (
+        <div className="evidence-scroll">{evidenceSlot}</div>
+      ) : mode === 'tracker' ? (
         <TrackerPanel
           rows={applications}
           busy={busy}
@@ -430,12 +500,55 @@ export function SidePanel({
           onPrepareSelected={onHuntPrepare}
           onOpenPreferences={onOpenPreferences}
         />
+      ) : mode === 'roles' && workspace && onOpenAbsolute && onTreeRefresh ? (
+        <RoleSwitcher
+          workspace={workspace}
+          tree={tree}
+          jobDescription={jobDescription}
+          busy={busy}
+          onOpenPath={onOpenAbsolute}
+          onTreeRefresh={onTreeRefresh}
+        />
       ) : (
         <>
-          <div className="chat-log">
+          <div className="chat-log" aria-live="polite">
             {messages.map((m) => (
-              <div key={m.id} className={`chat-bubble ${m.role}`}>
-                {m.content}
+              <div key={m.id} className={`chat-bubble ${m.role} ${m.streaming ? 'streaming' : ''}`}>
+                {m.tools?.length ? (
+                  <ul className="agent-trail">
+                    {m.tools.map((t, i) => (
+                      <li key={`${t.name}-${i}`} className={`agent-step ${t.status}`}>
+                        <span className="agent-step-icon" aria-hidden="true">
+                          {t.status === 'running' ? '◌' : t.status === 'ok' ? '✓' : '✕'}
+                        </span>
+                        <span className="agent-step-text">{toolLine(t)}</span>
+                        {t.summary ? <span className="agent-step-summary">{t.summary}</span> : null}
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+                <div className="chat-bubble-body">{m.content}</div>
+                {m.attribution ? <div className="chat-meta">{m.attribution}</div> : null}
+                {m.role === 'assistant' && onFeedback && !m.streaming ? (
+                  <div className="chat-feedback">
+                    <button
+                      type="button"
+                      className={`btn ghost feedback-btn ${m.feedback === 'up' ? 'active' : ''}`}
+                      aria-label="Helpful"
+                      onClick={() => onFeedback(m.id, 'up')}
+                    >
+                      ▲
+                    </button>
+                    <button
+                      type="button"
+                      className={`btn ghost feedback-btn ${m.feedback === 'down' ? 'active' : ''}`}
+                      aria-label="Not helpful"
+                      onClick={() => onFeedback(m.id, 'down')}
+                    >
+                      ▼
+                    </button>
+                  </div>
+                ) : null}
               </div>
             ))}
           </div>
@@ -488,23 +601,34 @@ export function SidePanel({
           ) : (
             <div className="chat-form">
               <textarea
-                placeholder="e.g. Shorten the summary and emphasize AI governance…"
+                placeholder="Ask for a rewrite, or select text in the editor for Improve / Shorten / Add metrics."
                 value={instruction}
                 onChange={(e) => setInstruction(e.target.value)}
-                rows={5}
-              />
-              <button
-                type="button"
-                className="btn primary block"
-                disabled={busy}
-                onClick={() => {
-                  const text = instruction
-                  setInstruction('')
-                  void onEdit(text)
+                rows={3}
+                onKeyDown={(e) => {
+                  if ((e.ctrlKey || e.metaKey) && e.key === 'Enter' && instruction.trim() && !busy) {
+                    e.preventDefault()
+                    const text = instruction
+                    setInstruction('')
+                    void onEdit(text)
+                  }
                 }}
-              >
-                {busy ? 'Editing…' : 'Apply AI edit'}
-              </button>
+              />
+              <div className="chat-form-actions">
+                <span className="muted small">Ctrl+Enter to send</span>
+                <button
+                  type="button"
+                  className={`btn ${instruction.trim() ? 'primary' : ''} sm`}
+                  disabled={busy || !instruction.trim()}
+                  onClick={() => {
+                    const text = instruction
+                    setInstruction('')
+                    void onEdit(text)
+                  }}
+                >
+                  {busy ? 'Working…' : 'Send'}
+                </button>
+              </div>
             </div>
           )}
         </>
