@@ -1,34 +1,48 @@
+import { FilePlus2, FolderOpen, KeyRound } from 'lucide-react'
+
 type Props = {
   onOpenFolder: () => void
   onSettings: () => void
 }
 
+const STEPS = [
+  'Open or create a workspace folder — we scaffold base-resume.md, job-preferences.md, resumes/ and apply-kits/.',
+  'Paste your master resume into base-resume.md and set your target keywords in preferences.',
+  'Shortlist roles in Job hunt, or paste a job description into Tailor.',
+  'Review every AI edit as a diff before it touches a file.',
+  'Export a PDF or build a full apply kit when you are ready to submit.',
+]
+
 export function Welcome({ onOpenFolder, onSettings }: Props) {
   return (
     <main className="welcome">
       <div className="welcome-inner">
-        <p className="eyebrow">Free · Bring your own API key</p>
+        <span className="welcome-mark" aria-hidden="true">
+          <FilePlus2 size={20} strokeWidth={1.75} />
+        </span>
+        <p className="eyebrow">Bring your own API key</p>
         <h1>Resume Studio</h1>
         <p className="lede">
-          A Cursor-like editor for your master resume and per-role tailored markdown — paste a JD,
-          generate a fit-focused draft with free NVIDIA NIM or Cursor SDK, refine in chat, export
-          PDF.
+          A local-first workspace for your master resume and per-role tailored drafts. Research a
+          role, generate evidence-backed edits, review every change as a diff, and export.
         </p>
         <div className="welcome-actions">
-          <button type="button" className="btn primary large" onClick={onOpenFolder}>
+          <button type="button" className="btn primary" onClick={onOpenFolder}>
+            <FolderOpen size={14} strokeWidth={1.75} />
             Open workspace folder
           </button>
-          <button type="button" className="btn ghost large" onClick={onSettings}>
+          <button type="button" className="btn" onClick={onSettings}>
+            <KeyRound size={14} strokeWidth={1.75} />
             Add API key
           </button>
         </div>
         <ol className="welcome-steps">
-          <li>Open or create a folder (we add <code>base-resume.md</code>, <code>job-preferences.md</code>, <code>resumes/</code>, <code>apply-kits/</code>).</li>
-          <li>Paste your master resume into <code>base-resume.md</code>; tweak Hunt keywords in preferences.</li>
-          <li>Use <strong>Hunt</strong> to shortlist remote roles, then <strong>Prepare</strong>.</li>
-          <li>Or paste a JD in <strong>Tailor</strong> / click <strong>Apply kit</strong>.</li>
-          <li>Track status in <strong>Tracker</strong>; use <strong>Interview prep</strong> when you get a call.</li>
-          <li>Apply manually in the ATS.</li>
+          {STEPS.map((step, i) => (
+            <li key={step}>
+              <span className="welcome-step-num">{i + 1}</span>
+              {step}
+            </li>
+          ))}
         </ol>
       </div>
     </main>

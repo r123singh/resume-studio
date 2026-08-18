@@ -9,7 +9,7 @@ import {
 import fs from 'node:fs/promises'
 import fsSync from 'node:fs'
 import path from 'node:path'
-import { completeHttpChat, type ChatMessage, type ProviderId } from './ai-http'
+import type { ChatMessage, ProviderId } from './agent/types'
 import {
   kitDirFromNotes,
   listApplications,
@@ -17,6 +17,13 @@ import {
   type ApplicationStatus,
 } from './applications'
 import { ensureJobPreferences, searchJobs } from './job-hunt'
+import { searchWorkspace } from './workspace-search'
+import { gitCommit, gitDiff, gitInit, gitStatus } from './git'
+import { clearEvidenceCache, fetchJobContext } from './job-research'
+import { runAgent, runCompletion } from './agent/runner'
+
+/** In-flight agent runs, so the UI can cancel them. */
+const agentRuns = new Map<string, AbortController>()
 const isDev = !app.isPackaged
 let mainWindow: BrowserWindow | null = null
 
@@ -29,6 +36,19 @@ type AppSettings = {
   anthropicKeyEnc?: string
   geminiKeyEnc?: string
   lastWorkspace?: string
+  /** When false, block outbound LLM calls (local-only mode). */
+  allowExternalAi?: boolean
+  /** Redact email/phone/linkedin from prompts before send. */
+  redactPii?: boolean
+  /** Require diff confirm for large AI edits (renderer also enforces). */
+  confirmLargeEdits?: boolean
+  /** Opt-in: allow fetching job/company pages for Evidence-Backed Tailor. */
+  allowWebResearch?: boolean
+  /** Amazon Bedrock API key (bearer auth); blank uses the AWS credential chain. */
+  bedrockKeyEnc?: string
+  awsRegion?: string
+  /** Let the model plan with tools instead of a single-shot prompt. */
+  agentMode?: boolean
 }
 
 function settingsPath() {
@@ -48,11 +68,19 @@ async function readSettings(): Promise<AppSettings> {
       anthropicKeyEnc: parsed.anthropicKeyEnc,
       geminiKeyEnc: parsed.geminiKeyEnc,
       lastWorkspace: parsed.lastWorkspace,
+      allowExternalAi: parsed.allowExternalAi !== false,
+      redactPii: Boolean(parsed.redactPii),
+      confirmLargeEdits: parsed.confirmLargeEdits !== false,
+      allowWebResearch: Boolean(parsed.allowWebResearch),
     }
   } catch {
     return {
       provider: 'nvidia',
       model: 'meta/llama-3.3-70b-instruct',
+      allowExternalAi: true,
+      redactPii: false,
+      confirmLargeEdits: true,
+      allowWebResearch: false,
     }
   }
 }
@@ -90,6 +118,7 @@ async function ensureWorkspaceScaffold(root: string) {
   await fs.mkdir(resumesDir, { recursive: true })
   await fs.mkdir(applyKitsDir, { recursive: true })
   await fs.mkdir(path.join(root, 'interview-prep'), { recursive: true })
+  await fs.mkdir(path.join(root, 'variants'), { recursive: true })
   await ensureJobPreferences(root)
   if (!fsSync.existsSync(baseResume)) {
     await fs.writeFile(
@@ -181,7 +210,7 @@ function createWindow() {
     height: 900,
     minWidth: 1100,
     minHeight: 700,
-    backgroundColor: '#0f1412',
+    backgroundColor: '#0d0e11',
     title: 'Resume Studio',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -269,6 +298,13 @@ ipcMain.handle('settings:get', async () => {
     hasOpenAI: Boolean(decryptSecret(s.openaiKeyEnc)),
     hasAnthropic: Boolean(decryptSecret(s.anthropicKeyEnc)),
     hasGemini: Boolean(decryptSecret(s.geminiKeyEnc)),
+    hasBedrock: Boolean(decryptSecret(s.bedrockKeyEnc)),
+    awsRegion: s.awsRegion || '',
+    agentMode: s.agentMode !== false,
+    allowExternalAi: s.allowExternalAi !== false,
+    redactPii: Boolean(s.redactPii),
+    confirmLargeEdits: s.confirmLargeEdits !== false,
+    allowWebResearch: Boolean(s.allowWebResearch),
   }
 })
 
@@ -285,14 +321,30 @@ ipcMain.handle(
       anthropicKey?: string
       geminiKey?: string
       lastWorkspace?: string | null
+      allowExternalAi?: boolean
+      redactPii?: boolean
+      confirmLargeEdits?: boolean
+      allowWebResearch?: boolean
+      bedrockKey?: string
+      awsRegion?: string
+      agentMode?: boolean
     },
   ) => {
     const s = await readSettings()
     if (patch.provider) s.provider = patch.provider
+    if (typeof patch.awsRegion === 'string') s.awsRegion = patch.awsRegion.trim()
+    if (typeof patch.agentMode === 'boolean') s.agentMode = patch.agentMode
+    if (typeof patch.bedrockKey === 'string' && patch.bedrockKey.trim()) {
+      s.bedrockKeyEnc = encryptSecret(patch.bedrockKey.trim())
+    }
     if (patch.model) s.model = patch.model
     if (patch.lastWorkspace !== undefined) {
       s.lastWorkspace = patch.lastWorkspace || undefined
     }
+    if (typeof patch.allowExternalAi === 'boolean') s.allowExternalAi = patch.allowExternalAi
+    if (typeof patch.redactPii === 'boolean') s.redactPii = patch.redactPii
+    if (typeof patch.confirmLargeEdits === 'boolean') s.confirmLargeEdits = patch.confirmLargeEdits
+    if (typeof patch.allowWebResearch === 'boolean') s.allowWebResearch = patch.allowWebResearch
     if (typeof patch.nvidiaKey === 'string' && patch.nvidiaKey.trim()) {
       s.nvidiaKeyEnc = encryptSecret(patch.nvidiaKey.trim())
     }
@@ -323,8 +375,46 @@ ipcMain.handle('settings:getSecrets', async () => {
     openaiKey: decryptSecret(s.openaiKeyEnc),
     anthropicKey: decryptSecret(s.anthropicKeyEnc),
     geminiKey: decryptSecret(s.geminiKeyEnc),
+    bedrockKey: decryptSecret(s.bedrockKeyEnc),
+    awsRegion: s.awsRegion || '',
   }
 })
+
+function keyForProvider(s: AppSettings, p: ProviderId): string {
+  if (p === 'nvidia') return decryptSecret(s.nvidiaKeyEnc)
+  if (p === 'cursor') return decryptSecret(s.cursorKeyEnc)
+  if (p === 'openai') return decryptSecret(s.openaiKeyEnc)
+  if (p === 'anthropic') return decryptSecret(s.anthropicKeyEnc)
+  if (p === 'bedrock') return decryptSecret(s.bedrockKeyEnc)
+  return decryptSecret(s.geminiKeyEnc)
+}
+
+async function appendAudit(workspace: string, row: Record<string, unknown>) {
+  if (!fsSync.existsSync(workspace)) return
+  const dir = path.join(workspace, '.resume-studio')
+  await fs.mkdir(dir, { recursive: true })
+  await fs.appendFile(
+    path.join(dir, 'ai-audit.jsonl'),
+    `${JSON.stringify({ ts: new Date().toISOString(), ...row })}\n`,
+    'utf8',
+  )
+}
+
+function redactPiiText(text: string): string {
+  return text
+    .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, '[email redacted]')
+    .replace(/(?:\+?\d[\d\s().-]{8,}\d)/g, '[phone redacted]')
+    .replace(/linkedin\.com\/in\/[^\s)]+/gi, 'linkedin.com/in/[redacted]')
+}
+
+function prepareMessages(messages: ChatMessage[], redact: boolean): ChatMessage[] {
+  if (!redact) return messages
+  return messages.map((m) => ({ ...m, content: redactPiiText(m.content) }))
+}
+
+function estimateTokens(text: string): number {
+  return Math.max(1, Math.ceil(text.length / 4))
+}
 
 ipcMain.handle(
   'ai:complete',
@@ -338,8 +428,14 @@ ipcMain.handle(
     },
   ) => {
     const s = await readSettings()
+    if (s.allowExternalAi === false) {
+      throw new Error(
+        'External AI is disabled in Settings (privacy). Enable “Allow external AI” to continue.',
+      )
+    }
     const provider = (payload.provider || s.provider) as ProviderId
     const model = payload.model || s.model
+    const messages = prepareMessages(payload.messages, Boolean(s.redactPii))
 
     const keyFor = (p: ProviderId) => {
       if (p === 'nvidia') return decryptSecret(s.nvidiaKeyEnc)
@@ -350,64 +446,199 @@ ipcMain.handle(
     }
 
     const apiKey = keyFor(provider)
-    if (!apiKey.trim()) {
+    if (provider !== 'bedrock' && !apiKey.trim()) {
       throw new Error(`Missing API key for ${provider}. Open Settings to add one.`)
     }
 
-    if (provider === 'cursor') {
-      let Agent: typeof import('@cursor/sdk').Agent
-      try {
-        ;({ Agent } = await import('@cursor/sdk'))
-      } catch {
-        throw new Error(
-          'Cursor SDK is not installed. Run: npm install @cursor/sdk — then restart Resume Studio.',
-        )
-      }
+    const result = await runCompletion({
+      spec: {
+        provider,
+        model,
+        apiKey,
+        region: s.awsRegion,
+        workspace: payload.workspace ?? null,
+      },
+      messages,
+    })
+    return result.text
+  },
+)
 
-      const system = payload.messages
-        .filter((m) => m.role === 'system')
-        .map((m) => m.content)
-        .join('\n\n')
-      const rest = payload.messages
-        .filter((m) => m.role !== 'system')
-        .map((m) => `${m.role.toUpperCase()}:\n${m.content}`)
-        .join('\n\n')
+ipcMain.handle(
+  'ai:stream',
+  async (
+    e,
+    payload: {
+      requestId: string
+      provider?: ProviderId
+      model?: string
+      messages: ChatMessage[]
+      workspace?: string | null
+    },
+  ) => {
+    const s = await readSettings()
+    if (s.allowExternalAi === false) {
+      throw new Error(
+        'External AI is disabled in Settings (privacy). Enable “Allow external AI” to continue.',
+      )
+    }
+    const provider = (payload.provider || s.provider) as ProviderId
+    const model = payload.model || s.model
+    const messages = prepareMessages(payload.messages, Boolean(s.redactPii))
+    const inputTokens = messages.reduce((n, m) => n + estimateTokens(m.content), 0)
 
-      const prompt = `${system ? `${system}\n\n` : ''}${rest}
-
-IMPORTANT:
-- Return ONLY the final text response for the user (markdown/JSON as requested).
-- Do not edit, create, or delete any files.
-- Do not run shell commands.
-- Do not explore the codebase.`
-
-      const cwd =
-        payload.workspace && fsSync.existsSync(payload.workspace)
-          ? payload.workspace
-          : app.getPath('temp')
-
-      try {
-        const result = await Agent.prompt(prompt, {
-          apiKey,
-          model: { id: model || 'composer-2.5' },
-          local: { cwd },
-        })
-        if (result.status === 'error') {
-          throw new Error(`Cursor agent run failed (${result.id || 'unknown'})`)
-        }
-        return String(result.result || '').trim()
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err)
-        throw new Error(`Cursor SDK error: ${message}`)
-      }
+    const keyFor = (p: ProviderId) => {
+      if (p === 'nvidia') return decryptSecret(s.nvidiaKeyEnc)
+      if (p === 'cursor') return decryptSecret(s.cursorKeyEnc)
+      if (p === 'openai') return decryptSecret(s.openaiKeyEnc)
+      if (p === 'anthropic') return decryptSecret(s.anthropicKeyEnc)
+      return decryptSecret(s.geminiKeyEnc)
+    }
+    const apiKey = keyFor(provider)
+    if (provider !== 'bedrock' && !apiKey.trim()) {
+      throw new Error(`Missing API key for ${provider}. Open Settings to add one.`)
     }
 
-    return completeHttpChat({
+    const sendChunk = (text: string) => {
+      e.sender.send('ai:stream:chunk', { requestId: payload.requestId, text })
+    }
+
+    const result = await runCompletion({
+      spec: {
+        provider,
+        model,
+        apiKey,
+        region: s.awsRegion,
+        workspace: payload.workspace ?? null,
+      },
+      messages,
+      onChunk: sendChunk,
+    })
+
+    return {
+      text: result.text,
       provider,
       model,
-      apiKey,
-      messages: payload.messages,
-    })
+      // Strands reports real usage; fall back to the estimate when a provider
+      // does not return it.
+      approxInputTokens: result.inputTokens || inputTokens,
+      approxOutputTokens: result.outputTokens || estimateTokens(result.text),
+    }
+  },
+)
+
+ipcMain.handle(
+  'agent:run',
+  async (
+    e,
+    payload: {
+      requestId: string
+      prompt: string
+      history?: ChatMessage[]
+      workspace: string | null
+      activeRelativePath: string | null
+      provider?: ProviderId
+      model?: string
+      maxTurns?: number
+    },
+  ) => {
+    const s = await readSettings()
+    if (s.allowExternalAi === false) {
+      throw new Error(
+        'External AI is disabled in Settings (privacy). Enable “Allow external AI” to continue.',
+      )
+    }
+
+    const provider = (payload.provider || s.provider) as ProviderId
+    const model = payload.model || s.model
+    const apiKey = keyForProvider(s, provider)
+    if (provider !== 'bedrock' && !apiKey.trim()) {
+      throw new Error(`Missing API key for ${provider}. Open Settings to add one.`)
+    }
+
+    const send = (data: Record<string, unknown>) => {
+      e.sender.send('agent:event', { requestId: payload.requestId, ...data })
+    }
+
+    const controller = new AbortController()
+    agentRuns.set(payload.requestId, controller)
+
+    try {
+      const result = await runAgent({
+        spec: {
+          provider,
+          model,
+          apiKey,
+          region: s.awsRegion,
+          workspace: payload.workspace,
+        },
+        prompt: payload.prompt,
+        history: prepareMessages(payload.history || [], Boolean(s.redactPii)),
+        workspace: payload.workspace,
+        activeRelativePath: payload.activeRelativePath,
+        allowWebResearch: Boolean(s.allowWebResearch),
+        maxTurns: payload.maxTurns,
+        signal: controller.signal,
+        onText: (text) => send({ kind: 'text', text }),
+        onToolEvent: (toolEvent) => send({ kind: 'tool', tool: toolEvent }),
+        onStatus: (status) => send({ kind: 'status', status }),
+      })
+
+      if (payload.workspace) {
+        await appendAudit(payload.workspace, {
+          action: 'agent-run',
+          provider,
+          model,
+          targetFile: payload.activeRelativePath || '',
+          promptSnapshot: payload.prompt,
+          toolCalls: result.toolCalls.map((t) => `${t.name}:${t.status}`),
+          turns: result.turns,
+          stopReason: result.stopReason,
+        })
+      }
+
+      return result
+    } finally {
+      agentRuns.delete(payload.requestId)
+    }
+  },
+)
+
+ipcMain.handle('agent:cancel', async (_e, requestId: string) => {
+  const controller = agentRuns.get(requestId)
+  if (!controller) return false
+  controller.abort()
+  return true
+})
+
+ipcMain.handle(
+  'ai:feedback',
+  async (
+    _e,
+    payload: {
+      workspace: string
+      rating: 'up' | 'down'
+      note?: string
+      provider?: string
+      model?: string
+      snippet?: string
+    },
+  ) => {
+    const dir = payload.workspace
+    if (!dir || !fsSync.existsSync(dir)) {
+      throw new Error('Workspace required to store feedback')
+    }
+    const file = path.join(dir, '.ai-feedback.jsonl')
+    const row = {
+      ts: new Date().toISOString(),
+      rating: payload.rating,
+      note: payload.note || '',
+      provider: payload.provider || '',
+      model: payload.model || '',
+      snippet: (payload.snippet || '').slice(0, 500),
+    }
+    await fs.appendFile(file, `${JSON.stringify(row)}\n`, 'utf8')
+    return true
   },
 )
 
@@ -624,3 +855,90 @@ ipcMain.handle('shell:showItem', async (_e, filePath: string) => {
 ipcMain.handle('path:join', async (_e, ...parts: string[]) => path.join(...parts))
 
 ipcMain.handle('app:getVersion', async () => app.getVersion())
+
+ipcMain.handle(
+  'workspace:search',
+  async (_e, payload: { workspace: string; query: string }) => {
+    return searchWorkspace(payload.workspace, payload.query)
+  },
+)
+
+ipcMain.handle('git:status', async (_e, workspace: string) => gitStatus(workspace))
+
+ipcMain.handle('git:diff', async (_e, workspace: string) => gitDiff(workspace))
+
+ipcMain.handle(
+  'git:commit',
+  async (_e, payload: { workspace: string; message: string; paths?: string[] }) => {
+    return gitCommit(payload.workspace, payload.message, payload.paths)
+  },
+)
+
+ipcMain.handle('git:init', async (_e, workspace: string) => gitInit(workspace))
+
+ipcMain.handle(
+  'research:fetchJobContext',
+  async (
+    _e,
+    payload: {
+      workspace: string | null
+      url: string
+      jobDescription?: string
+      pastedText?: string
+      topK?: number
+      refresh?: boolean
+    },
+  ) => {
+    const s = await readSettings()
+    // Pasted text never leaves the machine, so it needs no research opt-in.
+    if (payload.url.trim() && !s.allowWebResearch) {
+      throw new Error(
+        'Web research is off. Enable “Allow job/company web research” in Settings to use Evidence-Backed Tailor.',
+      )
+    }
+    return fetchJobContext(payload)
+  },
+)
+
+ipcMain.handle('research:clearCache', async (_e, workspace: string) =>
+  clearEvidenceCache(workspace),
+)
+
+ipcMain.handle(
+  'ai:audit',
+  async (
+    _e,
+    payload: {
+      workspace: string
+      action: string
+      provider?: string
+      model?: string
+      jobUrl?: string
+      evidence?: Array<{ id: string; sourceUrl: string; excerpt: string }>
+      promptSnapshot?: string
+      targetFile?: string
+    },
+  ) => {
+    if (!payload.workspace || !fsSync.existsSync(payload.workspace)) {
+      throw new Error('Workspace required to store the audit record')
+    }
+    const dir = path.join(payload.workspace, '.resume-studio')
+    await fs.mkdir(dir, { recursive: true })
+    const row = {
+      ts: new Date().toISOString(),
+      action: payload.action,
+      provider: payload.provider || '',
+      model: payload.model || '',
+      jobUrl: payload.jobUrl || '',
+      targetFile: payload.targetFile || '',
+      evidence: (payload.evidence || []).map((e) => ({
+        id: e.id,
+        sourceUrl: e.sourceUrl,
+        excerpt: e.excerpt.slice(0, 300),
+      })),
+      promptSnapshot: (payload.promptSnapshot || '').slice(0, 4000),
+    }
+    await fs.appendFile(path.join(dir, 'ai-audit.jsonl'), `${JSON.stringify(row)}\n`, 'utf8')
+    return true
+  },
+)

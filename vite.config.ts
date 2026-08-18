@@ -13,7 +13,19 @@ export default defineConfig({
           build: {
             outDir: 'dist-electron',
             rollupOptions: {
-              external: ['electron', '@cursor/sdk'],
+              // Strands and its provider SDKs are ESM-only; the main bundle is
+              // CJS, so they stay external and load via dynamic import().
+              external: [
+                'electron',
+                '@cursor/sdk',
+                '@strands-agents/sdk',
+                /^@strands-agents\/sdk\/.*/,
+                '@aws-sdk/client-bedrock-runtime',
+                '@anthropic-ai/sdk',
+                '@google/genai',
+                'openai',
+                'zod',
+              ],
               output: {
                 format: 'cjs',
                 entryFileNames: '[name].js',
