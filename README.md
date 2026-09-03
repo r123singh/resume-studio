@@ -52,18 +52,65 @@ Safety rails, which is why agent mode is safe to leave on:
 - Runs are appended to `.resume-studio/ai-audit.jsonl` with the tools called and the stop reason.
 
 Cursor is the one provider that cannot run agent mode: its SDK returns finished text with no
-tool-call channel. Bedrock, NVIDIA, OpenAI, Anthropic, and Gemini all work.
+tool-call channel. Resume Studio AI, Bedrock, NVIDIA, OpenAI, Anthropic, and Gemini all work.
 
-### Amazon Bedrock
+## AI providers
 
-Bedrock is Strands' native provider. Pick it in Settings, choose a region, and either paste a Bedrock
-API key or leave the field blank to use your normal AWS credential chain (profile, environment
-variables, or SSO). You need model access enabled in that region.
+There are three shapes of provider, and picking one is the only decision:
 
-Verify the agent layer without spending tokens:
+| Provider | Credential | Who owns cost and limits |
+| --- | --- | --- |
+| **NVIDIA NIM** (default, free) | your free NIM key, stored locally | you |
+| **Resume Studio AI** (`managed`) | sign in with an account | the backend |
+| OpenAI / Anthropic / Gemini / Bedrock | your own key or AWS profile | you |
+
+### Resume Studio AI (managed)
+
+The account-based option. Sign in once and your plan, entitlements, usage, and
+model access follow the account rather than the machine — install on a second
+computer, sign in, and the same subscription is there.
+
+The desktop app never receives AWS credentials. It sends a *capability*
+(`resume_edit`, `resume_rewrite`, `agent`, …) to the
+[AI Backend Control Layer](backend/README.md), which authenticates the user,
+checks entitlement and quota, picks the model, calls Bedrock, and meters the
+result. Because model choice lives in the backend, models can be upgraded
+without shipping a new desktop build.
+
+Streaming and agent mode work exactly as they do on every other provider: the
+backend forwards Bedrock Converse events end to end.
+
+To enable it, deploy the control plane and point the build at it:
+
+```bash
+node scripts/deploy-backend.mjs --env dev
+# then set RESUME_STUDIO_API_URL to the printed Function URL
+```
+
+Architecture, API contract, data model, security model, and migration plan:
+[`docs/ai-platform.md`](docs/ai-platform.md).
+
+### Amazon Bedrock (bring your own AWS account)
+
+The self-hosting path, kept for users who want to run Bedrock on their own
+infrastructure. Unlike the managed option, this one *does* use local AWS
+credentials, so it must run in a **Resume Studio–owned AWS account**.
+The app will not use your machine default AWS profile (on this workstation that is a Flytxt
+IAM user) and will refuse account `493447423170`.
+
+1. Create a product AWS account and `aws configure --profile resume-studio`.
+2. `npm run aws:bootstrap -- you@email.com` deploys least-privilege IAM, a $20 budget alarm, and a private artifacts bucket.
+3. Enable model access in `us-east-1`, then paste a Bedrock API key in Settings **or** leave the key blank to use profile `resume-studio`.
+4. Set **Expected AWS account ID** to the product account.
+
+Full cutover: [`aws/README.md`](aws/README.md).
+
+Verify without spending tokens:
 
 ```bash
 npm run smoke:agent
+npm run aws:verify
+npm run backend:test   # control plane suite, fully in-memory, no AWS calls
 ```
 
 ## Evidence-Backed Tailor
@@ -183,6 +230,9 @@ You can point Resume Studio at your existing `job-automation` folder.
 - No cloud account for Resume Studio itself. The Strands agent loop runs locally in the Electron main
   process — only the model call leaves your machine.
 - API keys leave your machine only when calling the selected LLM provider.
+- On the managed provider the app holds only an account token: a short-lived
+  access token in memory and a `safeStorage`-encrypted refresh token on disk.
+  No AWS credentials are ever sent to the desktop app.
 - Agent tools read your workspace locally; file contents reach a provider only as prompt context.
 - Job applications are still **manual** — this app does not auto-submit to ATS forms.
 

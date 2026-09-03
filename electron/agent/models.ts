@@ -1,10 +1,26 @@
 import type { Model } from '@strands-agents/sdk'
-import type { ChatMessage, ProviderId } from './types'
+import type { AiCapability, ChatMessage, ProviderId } from './types'
+import { PRODUCT_AWS } from '../aws/product'
+import { assertProductAwsIdentity } from '../aws/guard'
+import { createManagedModel } from './managed-model'
 
 export type { ProviderId }
 
-/** Providers that can drive a tool-using agent loop. */
-export const AGENTIC_PROVIDERS: ProviderId[] = ['bedrock', 'openai', 'nvidia', 'anthropic', 'gemini']
+/**
+ * Providers that can drive a tool-using agent loop.
+ *
+ * `managed` qualifies because the backend proxies Bedrock Converse tool events
+ * end to end, so the agent's tool protocol survives the extra hop.
+ */
+export const AGENTIC_PROVIDERS: ProviderId[] = [
+  'managed',
+  'bedrock',
+  'openai',
+  'nvidia',
+  'groq',
+  'anthropic',
+  'gemini',
+]
 
 export type ModelSpec = {
   provider: ProviderId
@@ -12,51 +28,104 @@ export type ModelSpec = {
   apiKey: string
   /** Bedrock only. */
   region?: string
+  /** IAM Access Key ID from Settings. */
+  accessKeyId?: string
+  /** IAM Secret Access Key from Settings. */
+  secretAccessKey?: string
+  /** Named AWS profile. Never `default`. Legacy fallback. */
+  profile?: string
+  /** When set, credential-chain Bedrock calls must use this account. */
+  expectedAccountId?: string
   temperature?: number
   maxTokens?: number
   /** Cursor runs its agent against a working directory. */
   workspace?: string | null
+  /** Managed provider: the logical operation the backend routes. */
+  capability?: AiCapability
+  /** Managed provider: groups turns of one conversation for auditing. */
+  conversationId?: string
+  signal?: AbortSignal
 }
 
 const NVIDIA_BASE_URL = 'https://integrate.api.nvidia.com/v1'
+const GROQ_BASE_URL = 'https://api.groq.com/openai/v1'
+
+const OPENAI_COMPAT_BASE: Partial<Record<ProviderId, string>> = {
+  nvidia: NVIDIA_BASE_URL,
+  groq: GROQ_BASE_URL,
+}
 
 /**
  * Builds a Strands `Model` for the configured provider.
  *
- * NVIDIA NIM is OpenAI wire-compatible, so it rides the OpenAI provider with a
- * custom baseURL rather than needing a bespoke implementation. That keeps the
- * app's free default working after the move to Strands.
+ * NVIDIA NIM and Groq are OpenAI wire-compatible, so they ride the OpenAI
+ * provider with a custom baseURL rather than needing a bespoke implementation.
  */
 export async function createModel(spec: ModelSpec): Promise<Model> {
   const { provider, model, apiKey, temperature = 0.3, maxTokens = 4096 } = spec
 
-  if (provider === 'bedrock') {
-    const { BedrockModel } = await import('@strands-agents/sdk')
-    return new BedrockModel({
-      modelId: model,
-      region: spec.region || process.env.AWS_REGION || 'us-east-1',
-      temperature,
-      maxTokens,
-      // An explicit key uses Bedrock bearer auth; otherwise fall back to the
-      // standard AWS credential chain (profile, env, SSO, instance role).
-      ...(apiKey.trim() ? { apiKey: apiKey.trim() } : {}),
-    }) as unknown as Model
+  if (provider === 'managed') {
+    // No credentials, region, or model ID: the backend owns all of it.
+    return createManagedModel(spec, {
+      capability: spec.capability ?? 'resume_edit',
+      ...(spec.conversationId ? { conversationId: spec.conversationId } : {}),
+    })
   }
 
-  if (provider === 'nvidia' || provider === 'openai') {
+  if (provider === 'bedrock') {
+    const { BedrockModel } = await import('@strands-agents/sdk')
+    const region = spec.region?.trim() || PRODUCT_AWS.region
+    const accessKeyId = spec.accessKeyId?.trim()
+    const secretAccessKey = spec.secretAccessKey?.trim()
+
+    if (accessKeyId && secretAccessKey) {
+      await assertProductAwsIdentity({
+        region,
+        accessKeyId,
+        secretAccessKey,
+        expectedAccountId: spec.expectedAccountId,
+      })
+      return new BedrockModel({
+        modelId: model,
+        region,
+        temperature,
+        maxTokens,
+        clientConfig: {
+          region,
+          credentials: { accessKeyId, secretAccessKey },
+        },
+      }) as unknown as Model
+    }
+
+    // Legacy Bedrock API key (bearer), if one was saved before access keys.
+    if (apiKey.trim()) {
+      return new BedrockModel({
+        modelId: model,
+        region,
+        temperature,
+        maxTokens,
+        apiKey: apiKey.trim(),
+      }) as unknown as Model
+    }
+
+    throw new Error(
+      'Missing AWS Access Key ID or Secret Access Key. Open Settings → Bedrock to add them.',
+    )
+  }
+
+  if (provider === 'nvidia' || provider === 'groq' || provider === 'openai') {
     const { OpenAIModel } = await import('@strands-agents/sdk/models/openai')
     if (!apiKey.trim()) {
       throw new Error(`Missing API key for ${provider}. Open Settings to add one.`)
     }
+    const baseURL = OPENAI_COMPAT_BASE[provider]
     return new OpenAIModel({
       api: 'chat',
       modelId: model,
       apiKey: apiKey.trim(),
       temperature,
       maxTokens,
-      ...(provider === 'nvidia'
-        ? { clientConfig: { baseURL: NVIDIA_BASE_URL, apiKey: apiKey.trim() } }
-        : {}),
+      ...(baseURL ? { clientConfig: { baseURL, apiKey: apiKey.trim() } } : {}),
     }) as unknown as Model
   }
 

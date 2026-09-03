@@ -8,19 +8,85 @@ export type TreeNode = {
   children?: TreeNode[]
 }
 
-export type ProviderId = 'nvidia' | 'cursor' | 'openai' | 'anthropic' | 'gemini' | 'bedrock'
+export type ProviderId =
+  | 'nvidia'
+  | 'groq'
+  | 'cursor'
+  | 'openai'
+  | 'anthropic'
+  | 'gemini'
+  | 'bedrock'
+  | 'managed'
+
+/** Logical operation names the managed backend routes to a model. */
+export type AiCapability =
+  | 'resume_edit'
+  | 'resume_analysis'
+  | 'resume_generation'
+  | 'resume_rewrite'
+  | 'interview_prep'
+  | 'agent'
+  | 'chat'
+
+export type PlatformStatus = {
+  /** Whether this build has a backend URL compiled in. */
+  configured: boolean
+  signedIn: boolean
+  email: string
+}
+
+export type PlatformResult<T> =
+  | { ok: true; data: T }
+  | { ok: false; code: string; message: string }
+
+export type AccountState = {
+  account: { user_id: string; email: string; status: string; created_at: string }
+  subscription: {
+    plan_id: string
+    status: string
+    current_period_start: string
+    current_period_end: string
+    cancel_at_period_end: boolean
+    grace_period_ends_at?: string
+  }
+  entitlements: {
+    planId: string
+    planName: string
+    aiAccess: boolean
+    capabilities: string[]
+    features: string[]
+    requestsLimit: number
+    requestsUsed: number
+    requestsRemaining: number
+    periodEnd: string
+    degradedFrom?: string
+  }
+  usage: {
+    period: string
+    requests: number
+    input_tokens: number
+    output_tokens: number
+    estimated_cost_usd: number
+  }
+  feature_flags: Record<string, boolean>
+}
 
 export type PublicSettings = {
   provider: ProviderId
   model: string
   lastWorkspace: string | null
   hasNvidia: boolean
+  hasGroq: boolean
   hasCursor: boolean
   hasOpenAI: boolean
   hasAnthropic: boolean
   hasGemini: boolean
   hasBedrock: boolean
+  hasBedrockAccessKeyId: boolean
+  hasBedrockSecretAccessKey: boolean
   awsRegion: string
+  awsProfile: string
+  awsAccountId: string
   agentMode: boolean
   allowExternalAi: boolean
   redactPii: boolean
@@ -81,12 +147,17 @@ export type SecretSettings = {
   provider: ProviderId
   model: string
   nvidiaKey: string
+  groqKey: string
   cursorKey: string
   openaiKey: string
   anthropicKey: string
   geminiKey: string
   bedrockKey: string
+  bedrockAccessKeyId: string
+  bedrockSecretAccessKey: string
   awsRegion: string
+  awsProfile: string
+  awsAccountId: string
 }
 
 const api = {
@@ -106,6 +177,7 @@ const api = {
     provider?: PublicSettings['provider']
     model?: string
     nvidiaKey?: string
+    groqKey?: string
     cursorKey?: string
     openaiKey?: string
     anthropicKey?: string
@@ -116,21 +188,44 @@ const api = {
     confirmLargeEdits?: boolean
     allowWebResearch?: boolean
     bedrockKey?: string
+    bedrockAccessKeyId?: string
+    bedrockSecretAccessKey?: string
     awsRegion?: string
+    awsProfile?: string
+    awsAccountId?: string
     agentMode?: boolean
   }): Promise<boolean> => ipcRenderer.invoke('settings:set', patch),
   getSecrets: (): Promise<SecretSettings> => ipcRenderer.invoke('settings:getSecrets'),
+  /** Managed AI account. Server-side truth; nothing here is cached locally. */
+  platformStatus: (): Promise<PlatformStatus> => ipcRenderer.invoke('platform:status'),
+  platformSignIn: (
+    email: string,
+    password: string,
+  ): Promise<PlatformResult<{ userId: string; email: string }>> =>
+    ipcRenderer.invoke('platform:signIn', { email, password }),
+  platformSignUp: (
+    email: string,
+    password: string,
+  ): Promise<PlatformResult<{ userId: string; email: string }>> =>
+    ipcRenderer.invoke('platform:signUp', { email, password }),
+  platformSignOut: (): Promise<boolean> => ipcRenderer.invoke('platform:signOut'),
+  platformAccount: (): Promise<PlatformResult<AccountState>> =>
+    ipcRenderer.invoke('platform:account'),
+  platformUsage: (): Promise<PlatformResult<Record<string, unknown>>> =>
+    ipcRenderer.invoke('platform:usage'),
   completeChat: (payload: {
     provider: PublicSettings['provider']
     model: string
     messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>
     workspace: string | null
+    capability?: AiCapability
   }): Promise<string> => ipcRenderer.invoke('ai:complete', payload),
   streamChat: (payload: {
     provider: PublicSettings['provider']
     model: string
     messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>
     workspace: string | null
+    capability?: AiCapability
     onChunk?: (chunk: string) => void
   }): Promise<{
     text: string
@@ -152,6 +247,7 @@ const api = {
         model: payload.model,
         messages: payload.messages,
         workspace: payload.workspace,
+        capability: payload.capability,
       })
       .finally(() => {
         ipcRenderer.removeListener('ai:stream:chunk', handler)

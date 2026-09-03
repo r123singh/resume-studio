@@ -1,5 +1,18 @@
-import { useMemo } from 'react'
-import { FileText, FolderOpen, Heading, ListTree, RefreshCw } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
+import {
+  ChevronDown,
+  ChevronRight,
+  File,
+  FileCode,
+  FileText,
+  Folder,
+  FolderOpen,
+  Heading,
+  Image as ImageIcon,
+  ListTree,
+  RefreshCw,
+} from 'lucide-react'
+import type { LucideIcon } from 'lucide-react'
 import type { TreeNode } from '../../electron/preload'
 import { listMarkdownSections } from '../lib/markdown-nav'
 import { IconButton } from './ui/IconButton'
@@ -20,47 +33,80 @@ type Props = {
   onOpenFolder: () => void
 }
 
+/** Pick a file-type icon from the extension, like an IDE explorer. */
+function fileIconFor(name: string): LucideIcon {
+  const ext = name.slice(name.lastIndexOf('.') + 1).toLowerCase()
+  if (['md', 'markdown', 'txt', 'rtf', 'pdf', 'doc', 'docx'].includes(ext)) return FileText
+  if (
+    ['ts', 'tsx', 'js', 'jsx', 'mjs', 'cjs', 'json', 'css', 'scss', 'html', 'yml', 'yaml', 'sh', 'py'].includes(
+      ext,
+    )
+  )
+    return FileCode
+  if (['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp', 'ico'].includes(ext)) return ImageIcon
+  return File
+}
+
 function NodeRow({
   node,
   depth,
   activePath,
   onOpen,
+  expanded,
+  onToggle,
 }: {
   node: TreeNode
   depth: number
   activePath: string | null
   onOpen: (node: TreeNode) => void
+  expanded: Set<string>
+  onToggle: (path: string) => void
 }) {
-  const active = node.path === activePath
-
   if (node.type === 'directory') {
+    const open = expanded.has(node.path)
+    const Chevron = open ? ChevronDown : ChevronRight
+    const FolderIcon = open ? FolderOpen : Folder
     return (
       <div className="tree-dir">
-        <div className="tree-label dir" style={{ paddingLeft: 8 + depth * 10 }}>
+        <button
+          type="button"
+          className="tree-label dir"
+          style={{ paddingLeft: 8 + depth * 8 }}
+          onClick={() => onToggle(node.path)}
+          title={node.relativePath}
+        >
+          <Chevron size={16} strokeWidth={1.5} className="tree-chevron" />
+          <FolderIcon size={16} strokeWidth={1.5} />
           <span className="tree-label-text">{node.name}</span>
-        </div>
-        {(node.children || []).map((child) => (
-          <NodeRow
-            key={child.path}
-            node={child}
-            depth={depth + 1}
-            activePath={activePath}
-            onOpen={onOpen}
-          />
-        ))}
+        </button>
+        {open
+          ? (node.children || []).map((child) => (
+              <NodeRow
+                key={child.path}
+                node={child}
+                depth={depth + 1}
+                activePath={activePath}
+                onOpen={onOpen}
+                expanded={expanded}
+                onToggle={onToggle}
+              />
+            ))
+          : null}
       </div>
     )
   }
 
+  const active = node.path === activePath
+  const Icon = fileIconFor(node.name)
   return (
     <button
       type="button"
       className={`tree-label file ${active ? 'active' : ''}`}
-      style={{ paddingLeft: 8 + depth * 10 }}
+      style={{ paddingLeft: 8 + depth * 8 + 22 }}
       onClick={() => onOpen(node)}
       title={node.relativePath}
     >
-      <FileText size={14} strokeWidth={1.75} />
+      <Icon size={16} strokeWidth={1.5} />
       <span className="tree-label-text">{node.name}</span>
     </button>
   )
@@ -84,6 +130,46 @@ export function Explorer({
 }: Props) {
   const short = workspace.split(/[/\\]/).filter(Boolean).slice(-1)[0] || workspace
   const sections = useMemo(() => listMarkdownSections(content), [content])
+
+  const [expanded, setExpanded] = useState<Set<string>>(new Set())
+
+  const toggleDir = (path: string) =>
+    setExpanded((prev) => {
+      const next = new Set(prev)
+      if (next.has(path)) next.delete(path)
+      else next.add(path)
+      return next
+    })
+
+  // Expand top-level folders on first load so the workspace isn't a wall of
+  // collapsed rows. Only seeds when the user hasn't toggled anything yet.
+  useEffect(() => {
+    setExpanded((prev) => {
+      if (prev.size) return prev
+      const next = new Set<string>()
+      for (const node of tree) if (node.type === 'directory') next.add(node.path)
+      return next
+    })
+  }, [tree])
+
+  // Reveal the active file by expanding every folder that contains it.
+  useEffect(() => {
+    if (!activePath) return
+    setExpanded((prev) => {
+      const next = new Set(prev)
+      const addAncestors = (nodes: TreeNode[]) => {
+        for (const node of nodes) {
+          if (node.type !== 'directory' || !node.children) continue
+          if (activePath.length > node.path.length && activePath.startsWith(node.path)) {
+            next.add(node.path)
+            addAncestors(node.children)
+          }
+        }
+      }
+      addAncestors(tree)
+      return next
+    })
+  }, [activePath, tree])
 
   // The active section is the last heading at or above the cursor.
   const activeIndex = useMemo(() => {
@@ -129,6 +215,8 @@ export function Explorer({
                   depth={0}
                   activePath={activePath}
                   onOpen={onOpen}
+                  expanded={expanded}
+                  onToggle={toggleDir}
                 />
               ))
             ) : (

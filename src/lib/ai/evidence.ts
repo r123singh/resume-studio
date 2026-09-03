@@ -145,7 +145,10 @@ export function applyEvidenceSuggestions(
     if (!s.accepted) continue
 
     if (s.target && content.includes(s.target)) {
-      content = content.replace(s.target, s.text)
+      // Use a function replacer so `$$`, `$&`, `` $` ``, `$'` in the model's
+      // bullet (e.g. a literal "$$500K") are inserted verbatim rather than
+      // interpreted as replacement patterns, which would silently corrupt text.
+      content = content.replace(s.target, () => s.text)
       applied++
       continue
     }

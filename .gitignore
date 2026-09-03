@@ -17,3 +17,14 @@ node_modules
 # Workspace-local AI state (evidence cache, audit log, feedback)
 .resume-studio/
 .ai-feedback.jsonl
+
+# Product AWS deploy output (account id, stack outputs)
+aws/local.json
+
+# AI control plane build output. `dist` above only matches the repo root.
+backend/dist/
+backend/dist-bundle/
+
+# Backend runtime secrets. Real values live in AWS Secrets Manager.
+backend/.env
+backend/.env.*

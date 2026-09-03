@@ -2,15 +2,25 @@ import Editor, { loader } from '@monaco-editor/react'
 import * as monaco from 'monaco-editor'
 import type { editor as MonacoEditor } from 'monaco-editor'
 import { useEffect, useRef, useState } from 'react'
-import { FileText, Sparkles } from 'lucide-react'
+import { FileText, Sparkles, X } from 'lucide-react'
 import { EmptyState } from './ui/EmptyState'
 import { RecruiterLens } from './RecruiterLens'
 import { analyzeRecruiterLens, type LensMode } from '../lib/recruiter-lens'
 import { achievementSnippetTemplate } from '../lib/achievements'
 
+export type EditorTab = {
+  path: string
+  relativePath: string
+  dirty: boolean
+}
+
 type Props = {
   content: string
   relativePath: string | null
+  tabs?: EditorTab[]
+  activePath?: string | null
+  onSelectTab?: (path: string) => void
+  onCloseTab?: (path: string) => void
   jobDescription?: string
   lensMode: LensMode
   ghostText?: string
@@ -54,6 +64,10 @@ function severityOf(s: 'error' | 'warn' | 'info'): monaco.MarkerSeverity {
 export function EditorPane({
   content,
   relativePath,
+  tabs = [],
+  activePath = null,
+  onSelectTab,
+  onCloseTab,
   jobDescription = '',
   lensMode,
   ghostText = '',
@@ -138,12 +152,55 @@ export function EditorPane({
 
   return (
     <section className="editor-pane">
-      <div className="pane-header editor-header">
-        <span className="editor-header-path" title={relativePath || undefined}>
-          {relativePath ? <FileText size={13} strokeWidth={1.75} /> : null}
-          {relativePath || 'No file open'}
-        </span>
-      </div>
+      {tabs.length ? (
+        <div className="editor-tabs" role="tablist" aria-label="Open files">
+          {tabs.map((tab) => {
+            const active = tab.path === activePath
+            const name = tab.relativePath.split('/').pop() || tab.relativePath
+            return (
+              <div
+                key={tab.path}
+                role="tab"
+                aria-selected={active}
+                title={tab.relativePath}
+                className={`editor-tab ${active ? 'active' : ''} ${tab.dirty ? 'dirty' : ''}`}
+                onMouseDown={(e) => {
+                  // Middle-click closes, matching editor convention.
+                  if (e.button === 1) {
+                    e.preventDefault()
+                    onCloseTab?.(tab.path)
+                  } else if (e.button === 0) {
+                    onSelectTab?.(tab.path)
+                  }
+                }}
+              >
+                <FileText size={12} strokeWidth={1.75} />
+                <span className="editor-tab-name">{name}</span>
+                <button
+                  type="button"
+                  className="editor-tab-close"
+                  aria-label={`Close ${name}`}
+                  onMouseDown={(e) => e.stopPropagation()}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onCloseTab?.(tab.path)
+                  }}
+                >
+                  {tab.dirty ? <span className="editor-tab-dot" aria-hidden="true" /> : null}
+                  <X size={12} strokeWidth={2} className="editor-tab-x" />
+                </button>
+              </div>
+            )
+          })}
+        </div>
+      ) : (
+        <div className="pane-header editor-header">
+          <span className="editor-header-path" title={relativePath || undefined}>
+            {relativePath ? <FileText size={13} strokeWidth={1.75} /> : null}
+            {relativePath || 'No file open'}
+          </span>
+        </div>
+      )}
       {relativePath ? (
         <RecruiterLens
           content={content}
@@ -229,6 +286,7 @@ export function EditorPane({
             <Editor
               height="100%"
               language="markdown"
+              path={relativePath ?? undefined}
               theme={theme === 'light' ? 'resume-light' : 'resume-dark'}
               value={content}
               loading={<div className="editor-empty">Loading editor…</div>}
@@ -342,15 +400,24 @@ export function EditorPane({
                 )
               }}
               options={{
-                fontFamily: '"JetBrains Mono", "IBM Plex Mono", Consolas, monospace',
-                fontSize: 13.5,
-                lineHeight: 22,
+                fontFamily: '"Cascadia Code", "Cascadia Mono", Consolas, "Courier New", monospace',
+                fontSize: 14,
+                lineHeight: 21,
+                fontWeight: '400',
                 minimap: { enabled: false },
                 wordWrap: 'on',
                 lineNumbers: 'on',
+                lineNumbersMinChars: 4,
+                glyphMargin: false,
+                folding: true,
                 scrollBeyondLastLine: false,
                 automaticLayout: true,
-                padding: { top: 12 },
+                padding: { top: 8, bottom: 8 },
+                renderLineHighlight: 'all',
+                cursorBlinking: 'smooth',
+                smoothScrolling: true,
+                overviewRulerLanes: 0,
+                hideCursorInOverviewRuler: true,
                 inlineSuggest: { enabled: true },
               }}
             />

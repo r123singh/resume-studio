@@ -1,4 +1,27 @@
-export type ProviderId = 'nvidia' | 'cursor' | 'openai' | 'anthropic' | 'gemini' | 'bedrock'
+/**
+ * `managed` is the account-based AWS option: requests go through the AI Backend
+ * Control Layer, which owns identity, entitlement, routing, and metering.
+ * `bedrock` remains the bring-your-own-AWS path for self-hosting.
+ */
+export type ProviderId =
+  | 'nvidia'
+  | 'groq'
+  | 'cursor'
+  | 'openai'
+  | 'anthropic'
+  | 'gemini'
+  | 'bedrock'
+  | 'managed'
+
+/** Logical operations the managed backend routes to a model. */
+export type AiCapability =
+  | 'resume_edit'
+  | 'resume_analysis'
+  | 'resume_generation'
+  | 'resume_rewrite'
+  | 'interview_prep'
+  | 'agent'
+  | 'chat'
 
 export type ChatMessage = {
   role: 'system' | 'user' | 'assistant'

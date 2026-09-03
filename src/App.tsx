@@ -28,7 +28,7 @@ import {
 import { EditorPane } from './components/EditorPane'
 import { SidePanel } from './components/SidePanel'
 import type { ApplicationRow, JobListing, PanelMode } from './components/SidePanel'
-import { SettingsModal } from './components/SettingsModal'
+import { SettingsPane } from './components/SettingsModal'
 import { Welcome } from './components/Welcome'
 import { CommandPalette, type PaletteCommand } from './components/CommandPalette'
 import { AchievementBuilder } from './components/AchievementBuilder'
@@ -114,6 +114,19 @@ type ChatItem = {
   tools?: AgentToolEvent[]
 }
 
+/**
+ * One open editor tab. The single-file buffer state below always mirrors the
+ * active tab; this registry snapshots every open file so switching tabs keeps
+ * each file's unsaved edits, dirty flag, and last-saved time.
+ */
+type OpenDoc = {
+  path: string
+  relativePath: string
+  content: string
+  dirty: boolean
+  lastSavedAt: number | null
+}
+
 export default function App() {
   const [workspace, setWorkspace] = useState<string | null>(null)
   const [tree, setTree] = useState<TreeNode[]>([])
@@ -121,6 +134,7 @@ export default function App() {
   const [activeRel, setActiveRel] = useState<string | null>(null)
   const [content, setContent] = useState('')
   const [dirty, setDirty] = useState(false)
+  const [openDocs, setOpenDocs] = useState<OpenDoc[]>([])
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [busy, setBusy] = useState(false)
   const [status, setStatus] = useState('Ready')
@@ -203,6 +217,14 @@ export default function App() {
 
   const openWorkspace = useCallback(
     async (root: string) => {
+      // A new folder invalidates every open tab (their paths belong to the old
+      // workspace), so reset the editor buffer and the tab registry.
+      setOpenDocs([])
+      setActivePath(null)
+      setActiveRel(null)
+      setContent('')
+      setDirty(false)
+      setLastSavedAt(null)
       setWorkspace(root)
       await refreshTree(root)
       setStatus(`Workspace: ${root}`)
@@ -285,10 +307,7 @@ export default function App() {
     if (edit.mode === 'create-file' && edit.createPath && edit.createRel && workspace) {
       await window.resumeStudio.writeFile(edit.createPath, edit.after)
       await refreshTree(workspace)
-      setActivePath(edit.createPath)
-      setActiveRel(edit.createRel)
-      setContent(edit.after)
-      setDirty(false)
+      openBufferAsTab(edit.createPath, edit.createRel, edit.after, { dirty: false })
       setStatus(`Created ${edit.createRel}`)
       return
     }
@@ -336,17 +355,104 @@ export default function App() {
     if (root) await openWorkspace(root)
   }
 
+  // Keep the tab registry in step with the active buffer, so an inactive tab
+  // always holds the latest edits made while it was focused. No dependency
+  // loop: this only writes openDocs, which is not a dependency.
+  useEffect(() => {
+    if (!activePath) return
+    setOpenDocs((prev) =>
+      prev.map((d) =>
+        d.path === activePath
+          ? { ...d, content, dirty, lastSavedAt, relativePath: activeRel ?? d.relativePath }
+          : d,
+      ),
+    )
+  }, [activePath, activeRel, content, dirty, lastSavedAt])
+
+  /** Open a file into a tab (adding it if new) and make it the active buffer. */
+  const openBufferAsTab = (
+    path: string,
+    relativePath: string,
+    text: string,
+    opts?: { dirty?: boolean; lastSavedAt?: number | null },
+  ) => {
+    const isDirty = opts?.dirty ?? false
+    const saved = opts?.lastSavedAt ?? null
+    setOpenDocs((prev) =>
+      prev.some((d) => d.path === path)
+        ? prev.map((d) =>
+            d.path === path
+              ? { ...d, relativePath, content: text, dirty: isDirty, lastSavedAt: saved }
+              : d,
+          )
+        : [...prev, { path, relativePath, content: text, dirty: isDirty, lastSavedAt: saved }],
+    )
+    setActivePath(path)
+    setActiveRel(relativePath)
+    setContent(text)
+    setDirty(isDirty)
+    setLastSavedAt(saved)
+  }
+
+  /** Switch to an already-open tab, restoring its in-memory (unsaved) content. */
+  const switchTab = (path: string) => {
+    const doc = openDocs.find((d) => d.path === path)
+    if (!doc) return
+    setActivePath(doc.path)
+    setActiveRel(doc.relativePath)
+    setContent(doc.content)
+    setDirty(doc.dirty)
+    setLastSavedAt(doc.lastSavedAt)
+    setLensMode('edit')
+  }
+
+  const closeTab = (path: string) => {
+    const doc = openDocs.find((d) => d.path === path)
+    if (!doc) return
+    if (doc.dirty && !window.confirm(`Discard unsaved changes to ${doc.relativePath}?`)) return
+    const idx = openDocs.findIndex((d) => d.path === path)
+    const remaining = openDocs.filter((d) => d.path !== path)
+    setOpenDocs(remaining)
+    if (path !== activePath) return
+    // Focus the neighbour tab, matching editor convention (right, else left).
+    const nextDoc = remaining[idx] ?? remaining[idx - 1] ?? remaining[remaining.length - 1] ?? null
+    if (nextDoc) {
+      setActivePath(nextDoc.path)
+      setActiveRel(nextDoc.relativePath)
+      setContent(nextDoc.content)
+      setDirty(nextDoc.dirty)
+      setLastSavedAt(nextDoc.lastSavedAt)
+    } else {
+      setActivePath(null)
+      setActiveRel(null)
+      setContent('')
+      setDirty(false)
+      setLastSavedAt(null)
+    }
+  }
+
+  // Closing settings re-reads persisted values so provider/model/flag changes
+  // made in the pane take effect in the running session immediately.
+  const closeSettings = () => {
+    setSettingsOpen(false)
+    void window.resumeStudio.getSettings().then((s) => {
+      setConfirmLargeEdits(s.confirmLargeEdits !== false)
+      setAllowWebResearch(Boolean(s.allowWebResearch))
+      setAgentMode(s.agentMode !== false)
+      setProvider(s.provider)
+      setModel(s.model)
+    })
+  }
+
   const openFile = async (node: TreeNode, line?: number) => {
     if (node.type !== 'file') return
-    if (dirty && activePath && node.path !== activePath) {
-      const ok = window.confirm('Save current file before switching?')
-      if (ok) await saveFile()
+    const existing = openDocs.find((d) => d.path === node.path)
+    if (existing) {
+      switchTab(existing.path)
+    } else {
+      const text = await window.resumeStudio.readFile(node.path)
+      openBufferAsTab(node.path, node.relativePath, text, { dirty: false })
     }
-    const text = await window.resumeStudio.readFile(node.path)
-    setActivePath(node.path)
-    setActiveRel(node.relativePath)
-    setContent(text)
-    setDirty(false)
     setLensMode('edit')
     setStatus(`Opened ${node.relativePath}`)
     if (line && line > 0) {
@@ -588,6 +694,7 @@ export default function App() {
     try {
       const result = await streamChat({
         ...ctx,
+        capability: 'resume_generation',
         messages,
         onChunk: (_chunk, assembled) => {
           setStreamPreview(assembled)
@@ -810,10 +917,7 @@ export default function App() {
     const prefsPath = await window.resumeStudio.ensureJobPreferences(workspace)
     await refreshTree(workspace)
     const text = await window.resumeStudio.readFile(prefsPath)
-    setActivePath(prefsPath)
-    setActiveRel('job-preferences.md')
-    setContent(text)
-    setDirty(false)
+    openBufferAsTab(prefsPath, 'job-preferences.md', text, { dirty: false })
     setStatus('Opened job-preferences.md')
   }
 
@@ -872,6 +976,7 @@ export default function App() {
       const today = new Date().toISOString().slice(0, 10)
       const raw = await completeChat({
         ...ctx,
+        capability: 'interview_prep',
         messages: [
           { role: 'system', content: buildInterviewPrepSystemPrompt() },
           {
@@ -895,10 +1000,7 @@ export default function App() {
       const outPath = await window.resumeStudio.pathJoin(prepDir, fileName)
       await window.resumeStudio.writeFile(outPath, markdown)
       await refreshTree(workspace)
-      setActivePath(outPath)
-      setActiveRel(`interview-prep/${fileName}`)
-      setContent(markdown)
-      setDirty(false)
+      openBufferAsTab(outPath, `interview-prep/${fileName}`, markdown, { dirty: false })
       pushChat(
         'assistant',
         `Interview prep ready: interview-prep/${fileName}${opts?.sourceRel ? ` (from ${opts.sourceRel})` : ''}`,
@@ -1131,6 +1233,7 @@ export default function App() {
 
       const result = await streamChat({
         ...ctx,
+        capability: 'resume_edit',
         messages,
         onChunk: (_c, assembled) => {
           updateChat(streamId, {
@@ -1279,6 +1382,7 @@ export default function App() {
 
       const result = await streamChat({
         ...apiCtx,
+        capability: 'resume_rewrite',
         messages,
         onChunk: (_c, assembled) => {
           const bullets = extractPartialBullets(assembled)
@@ -1585,8 +1689,11 @@ export default function App() {
           canApplyKit={false}
           canInterviewPrep={false}
         />
-        <Welcome onOpenFolder={pickFolder} onSettings={() => setSettingsOpen(true)} />
-        {settingsOpen && <SettingsModal onClose={() => setSettingsOpen(false)} />}
+        {settingsOpen ? (
+          <SettingsPane onClose={closeSettings} />
+        ) : (
+          <Welcome onOpenFolder={pickFolder} onSettings={() => setSettingsOpen(true)} />
+        )}
       </div>
     )
   }
@@ -1622,6 +1729,7 @@ export default function App() {
         lastSavedAt={lastSavedAt}
         gitSummary={gitSummary}
       />
+      {settingsOpen ? <SettingsPane onClose={closeSettings} /> : null}
       <div
         className={`main-panes ${sidebarOpen ? '' : 'sidebar-collapsed'} ${
           inspectorOpen ? '' : 'inspector-collapsed'
@@ -1630,6 +1738,7 @@ export default function App() {
           {
             '--sidebar-width': `${sidebarWidth}px`,
             '--inspector-width': `${inspectorWidth}px`,
+            display: settingsOpen ? 'none' : undefined,
           } as React.CSSProperties
         }
       >
@@ -1682,6 +1791,14 @@ export default function App() {
         <EditorPane
           content={content}
           relativePath={activeRel}
+          tabs={openDocs.map((d) => ({
+            path: d.path,
+            relativePath: d.relativePath,
+            dirty: d.dirty,
+          }))}
+          activePath={activePath}
+          onSelectTab={switchTab}
+          onCloseTab={closeTab}
           jobDescription={lensJobDescription}
           lensMode={lensMode}
           ghostText={ghostText}
@@ -1910,20 +2027,6 @@ export default function App() {
         onOpenGit={() => setGitOpen(true)}
         onOpenSettings={() => setSettingsOpen(true)}
       />
-      {settingsOpen && (
-        <SettingsModal
-          onClose={() => {
-            setSettingsOpen(false)
-            void window.resumeStudio.getSettings().then((s) => {
-              setConfirmLargeEdits(s.confirmLargeEdits !== false)
-              setAllowWebResearch(Boolean(s.allowWebResearch))
-              setAgentMode(s.agentMode !== false)
-              setProvider(s.provider)
-              setModel(s.model)
-            })
-          }}
-        />
-      )}
       <CommandPalette
         open={paletteOpen}
         mode={paletteMode}

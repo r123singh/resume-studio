@@ -46,7 +46,7 @@ export function ActivityRail<T extends string>({
             aria-label={item.label}
             aria-pressed={active === item.id}
           >
-            <item.icon size={18} strokeWidth={1.75} />
+            <item.icon size={22} strokeWidth={1.5} />
             {item.badge ? <span className="rail-badge" aria-hidden="true" /> : null}
           </button>
         </Tooltip>

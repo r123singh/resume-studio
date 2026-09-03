@@ -3,13 +3,15 @@ import {
   BrowserWindow,
   dialog,
   ipcMain,
+  Menu,
+  nativeTheme,
   safeStorage,
   shell,
 } from 'electron'
 import fs from 'node:fs/promises'
 import fsSync from 'node:fs'
 import path from 'node:path'
-import type { ChatMessage, ProviderId } from './agent/types'
+import type { AiCapability, ChatMessage, ProviderId } from './agent/types'
 import {
   kitDirFromNotes,
   listApplications,
@@ -21,6 +23,8 @@ import { searchWorkspace } from './workspace-search'
 import { gitCommit, gitDiff, gitInit, gitStatus } from './git'
 import { clearEvidenceCache, fetchJobContext } from './job-research'
 import { runAgent, runCompletion } from './agent/runner'
+import { PRODUCT_AWS } from './aws/product'
+import * as platform from './platform/client'
 
 /** In-flight agent runs, so the UI can cancel them. */
 const agentRuns = new Map<string, AbortController>()
@@ -28,9 +32,10 @@ const isDev = !app.isPackaged
 let mainWindow: BrowserWindow | null = null
 
 type AppSettings = {
-  provider: 'nvidia' | 'cursor' | 'openai' | 'anthropic' | 'gemini'
+  provider: ProviderId
   model: string
   nvidiaKeyEnc?: string
+  groqKeyEnc?: string
   cursorKeyEnc?: string
   openaiKeyEnc?: string
   anthropicKeyEnc?: string
@@ -44,9 +49,15 @@ type AppSettings = {
   confirmLargeEdits?: boolean
   /** Opt-in: allow fetching job/company pages for Evidence-Backed Tailor. */
   allowWebResearch?: boolean
-  /** Amazon Bedrock API key (bearer auth); blank uses the AWS credential chain. */
+  /** Legacy Bedrock API key (bearer auth). Prefer access key + secret. */
   bedrockKeyEnc?: string
+  bedrockAccessKeyIdEnc?: string
+  bedrockSecretAccessKeyEnc?: string
   awsRegion?: string
+  /** Named profile for Bedrock SigV4. Never `default`. Legacy fallback. */
+  awsProfile?: string
+  /** Optional allowlist so credential-chain calls cannot drift accounts. */
+  awsAccountId?: string
   /** Let the model plan with tools instead of a single-shot prompt. */
   agentMode?: boolean
 }
@@ -55,14 +66,50 @@ function settingsPath() {
   return path.join(app.getPath('userData'), 'settings.json')
 }
 
+const DEFAULT_NVIDIA_MODEL = 'nvidia/nemotron-3-nano-30b-a3b'
+const DEFAULT_GEMINI_MODEL = 'gemini-3.8-flash'
+
+/**
+ * NVIDIA NIM model IDs that were retired from build.nvidia.com and now 404.
+ * A persisted settings file may still point at one of these, which would make
+ * every free-provider AI call fail, so we migrate them to the current default.
+ */
+const RETIRED_NVIDIA_MODELS = new Set([
+  'meta/llama-3.3-70b-instruct',
+  'meta/llama-3.1-70b-instruct',
+  'nvidia/llama-3.1-nemotron-70b-instruct',
+  'deepseek-ai/deepseek-r1',
+  'qwen/qwen2.5-72b-instruct',
+  'google/gemma-2-27b-it',
+  'mistralai/mistral-small-24b-instruct',
+])
+
+const RETIRED_GEMINI_MODELS = new Set([
+  'gemini-2.0-flash',
+  'gemini-1.5-flash',
+  'gemini-1.5-pro',
+])
+
+function migrateModel(provider: string | undefined, model: string | undefined): string {
+  const resolved = model || DEFAULT_NVIDIA_MODEL
+  if ((provider || 'nvidia') === 'nvidia' && RETIRED_NVIDIA_MODELS.has(resolved)) {
+    return DEFAULT_NVIDIA_MODEL
+  }
+  if (provider === 'gemini' && RETIRED_GEMINI_MODELS.has(resolved)) {
+    return DEFAULT_GEMINI_MODEL
+  }
+  return resolved
+}
+
 async function readSettings(): Promise<AppSettings> {
   try {
     const raw = await fs.readFile(settingsPath(), 'utf8')
     const parsed = JSON.parse(raw) as Partial<AppSettings>
     return {
       provider: parsed.provider || 'nvidia',
-      model: parsed.model || 'meta/llama-3.3-70b-instruct',
+      model: migrateModel(parsed.provider, parsed.model),
       nvidiaKeyEnc: parsed.nvidiaKeyEnc,
+      groqKeyEnc: parsed.groqKeyEnc,
       cursorKeyEnc: parsed.cursorKeyEnc,
       openaiKeyEnc: parsed.openaiKeyEnc,
       anthropicKeyEnc: parsed.anthropicKeyEnc,
@@ -72,15 +119,26 @@ async function readSettings(): Promise<AppSettings> {
       redactPii: Boolean(parsed.redactPii),
       confirmLargeEdits: parsed.confirmLargeEdits !== false,
       allowWebResearch: Boolean(parsed.allowWebResearch),
+      bedrockKeyEnc: parsed.bedrockKeyEnc,
+      bedrockAccessKeyIdEnc: parsed.bedrockAccessKeyIdEnc,
+      bedrockSecretAccessKeyEnc: parsed.bedrockSecretAccessKeyEnc,
+      awsRegion: parsed.awsRegion || PRODUCT_AWS.region,
+      awsProfile: parsed.awsProfile || PRODUCT_AWS.profile,
+      awsAccountId: parsed.awsAccountId || '',
+      agentMode: parsed.agentMode !== false,
     }
   } catch {
     return {
       provider: 'nvidia',
-      model: 'meta/llama-3.3-70b-instruct',
+      model: DEFAULT_NVIDIA_MODEL,
       allowExternalAi: true,
       redactPii: false,
       confirmLargeEdits: true,
       allowWebResearch: false,
+      awsRegion: PRODUCT_AWS.region,
+      awsProfile: PRODUCT_AWS.profile,
+      awsAccountId: '',
+      agentMode: true,
     }
   }
 }
@@ -162,7 +220,31 @@ Write a 3–4 sentence professional summary.
   }
 }
 
-async function listMarkdownTree(root: string) {
+/** Directories that are never worth showing in the file tree. */
+const IGNORED_DIRS = new Set([
+  'node_modules',
+  'dist',
+  'dist-bundle',
+  'release',
+  'out',
+  'build',
+  'coverage',
+  '.git',
+  '.cache',
+  '.next',
+  '.turbo',
+  '.vite',
+])
+
+/** Files that are pure noise in a workspace listing. */
+const IGNORED_FILES = new Set(['.DS_Store', 'Thumbs.db'])
+
+/**
+ * Full workspace tree, IDE-explorer style: every file and folder (not just
+ * markdown), directories first then files, both alphabetical. Build artefacts
+ * and VCS internals are pruned so the tree stays readable.
+ */
+async function listWorkspaceTree(root: string) {
   type TreeNode = {
     name: string
     path: string
@@ -172,46 +254,64 @@ async function listMarkdownTree(root: string) {
   }
 
   async function walk(dir: string): Promise<TreeNode[]> {
-    const entries = await fs.readdir(dir, { withFileTypes: true })
-    const nodes: TreeNode[] = []
-    for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
-      if (entry.name.startsWith('.')) continue
+    let entries
+    try {
+      entries = await fs.readdir(dir, { withFileTypes: true })
+    } catch {
+      return []
+    }
+
+    const dirs: TreeNode[] = []
+    const files: TreeNode[] = []
+    for (const entry of entries) {
       const full = path.join(dir, entry.name)
       const relativePath = path.relative(root, full).split(path.sep).join('/')
       if (entry.isDirectory()) {
-        if (entry.name === 'node_modules' || entry.name === 'dist' || entry.name === 'release') {
-          continue
-        }
-        nodes.push({
+        if (IGNORED_DIRS.has(entry.name)) continue
+        dirs.push({
           name: entry.name,
           path: full,
           relativePath,
           type: 'directory',
           children: await walk(full),
         })
-      } else if (entry.name.endsWith('.md')) {
-        nodes.push({
-          name: entry.name,
-          path: full,
-          relativePath,
-          type: 'file',
-        })
+      } else {
+        if (IGNORED_FILES.has(entry.name)) continue
+        files.push({ name: entry.name, path: full, relativePath, type: 'file' })
       }
     }
-    return nodes
+
+    const byName = (a: TreeNode, b: TreeNode) =>
+      a.name.localeCompare(b.name, undefined, { sensitivity: 'base', numeric: true })
+    return [...dirs.sort(byName), ...files.sort(byName)]
   }
 
   return walk(root)
 }
 
 function createWindow() {
+  nativeTheme.themeSource = 'dark'
+  Menu.setApplicationMenu(null)
+
+  const workbench = '#141414'
   mainWindow = new BrowserWindow({
     width: 1440,
     height: 900,
     minWidth: 1100,
     minHeight: 700,
-    backgroundColor: '#0d0e11',
+    backgroundColor: workbench,
     title: 'Resume Studio',
+    autoHideMenuBar: true,
+    titleBarStyle: 'hidden',
+    ...(process.platform === 'darwin'
+      ? { trafficLightPosition: { x: 12, y: 10 } }
+      : {
+          titleBarOverlay: {
+            color: workbench,
+            symbolColor: '#cccccc',
+            height: 35,
+          },
+        }),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -262,7 +362,7 @@ ipcMain.handle('dialog:openFolder', async () => {
 ipcMain.handle('workspace:list', async (_e, root: string) => {
   if (!root) return []
   await ensureWorkspaceScaffold(root)
-  return listMarkdownTree(root)
+  return listWorkspaceTree(root)
 })
 
 ipcMain.handle('workspace:readFile', async (_e, filePath: string) => {
@@ -294,12 +394,17 @@ ipcMain.handle('settings:get', async () => {
     model: s.model,
     lastWorkspace: s.lastWorkspace ?? null,
     hasNvidia: Boolean(decryptSecret(s.nvidiaKeyEnc)),
+    hasGroq: Boolean(decryptSecret(s.groqKeyEnc)),
     hasCursor: Boolean(decryptSecret(s.cursorKeyEnc)),
     hasOpenAI: Boolean(decryptSecret(s.openaiKeyEnc)),
     hasAnthropic: Boolean(decryptSecret(s.anthropicKeyEnc)),
     hasGemini: Boolean(decryptSecret(s.geminiKeyEnc)),
-    hasBedrock: Boolean(decryptSecret(s.bedrockKeyEnc)),
-    awsRegion: s.awsRegion || '',
+    hasBedrock: hasBedrockCredentials(s),
+    hasBedrockAccessKeyId: Boolean(decryptSecret(s.bedrockAccessKeyIdEnc)),
+    hasBedrockSecretAccessKey: Boolean(decryptSecret(s.bedrockSecretAccessKeyEnc)),
+    awsRegion: s.awsRegion || PRODUCT_AWS.region,
+    awsProfile: s.awsProfile || PRODUCT_AWS.profile,
+    awsAccountId: s.awsAccountId || '',
     agentMode: s.agentMode !== false,
     allowExternalAi: s.allowExternalAi !== false,
     redactPii: Boolean(s.redactPii),
@@ -316,6 +421,7 @@ ipcMain.handle(
       provider?: AppSettings['provider']
       model?: string
       nvidiaKey?: string
+      groqKey?: string
       cursorKey?: string
       openaiKey?: string
       anthropicKey?: string
@@ -326,16 +432,36 @@ ipcMain.handle(
       confirmLargeEdits?: boolean
       allowWebResearch?: boolean
       bedrockKey?: string
+      bedrockAccessKeyId?: string
+      bedrockSecretAccessKey?: string
       awsRegion?: string
+      awsProfile?: string
+      awsAccountId?: string
       agentMode?: boolean
     },
   ) => {
     const s = await readSettings()
     if (patch.provider) s.provider = patch.provider
-    if (typeof patch.awsRegion === 'string') s.awsRegion = patch.awsRegion.trim()
+    if (typeof patch.awsRegion === 'string') s.awsRegion = patch.awsRegion.trim() || PRODUCT_AWS.region
+    if (typeof patch.awsProfile === 'string') {
+      const next = patch.awsProfile.trim() || PRODUCT_AWS.profile
+      if (next === 'default') {
+        throw new Error(
+          `AWS profile "default" is blocked. Use "${PRODUCT_AWS.profile}" from the product AWS account.`,
+        )
+      }
+      s.awsProfile = next
+    }
+    if (typeof patch.awsAccountId === 'string') s.awsAccountId = patch.awsAccountId.trim()
     if (typeof patch.agentMode === 'boolean') s.agentMode = patch.agentMode
     if (typeof patch.bedrockKey === 'string' && patch.bedrockKey.trim()) {
       s.bedrockKeyEnc = encryptSecret(patch.bedrockKey.trim())
+    }
+    if (typeof patch.bedrockAccessKeyId === 'string' && patch.bedrockAccessKeyId.trim()) {
+      s.bedrockAccessKeyIdEnc = encryptSecret(patch.bedrockAccessKeyId.trim())
+    }
+    if (typeof patch.bedrockSecretAccessKey === 'string' && patch.bedrockSecretAccessKey.trim()) {
+      s.bedrockSecretAccessKeyEnc = encryptSecret(patch.bedrockSecretAccessKey.trim())
     }
     if (patch.model) s.model = patch.model
     if (patch.lastWorkspace !== undefined) {
@@ -347,6 +473,9 @@ ipcMain.handle(
     if (typeof patch.allowWebResearch === 'boolean') s.allowWebResearch = patch.allowWebResearch
     if (typeof patch.nvidiaKey === 'string' && patch.nvidiaKey.trim()) {
       s.nvidiaKeyEnc = encryptSecret(patch.nvidiaKey.trim())
+    }
+    if (typeof patch.groqKey === 'string' && patch.groqKey.trim()) {
+      s.groqKeyEnc = encryptSecret(patch.groqKey.trim())
     }
     if (typeof patch.cursorKey === 'string' && patch.cursorKey.trim()) {
       s.cursorKeyEnc = encryptSecret(patch.cursorKey.trim())
@@ -371,22 +500,132 @@ ipcMain.handle('settings:getSecrets', async () => {
     provider: s.provider,
     model: s.model,
     nvidiaKey: decryptSecret(s.nvidiaKeyEnc),
+    groqKey: decryptSecret(s.groqKeyEnc),
     cursorKey: decryptSecret(s.cursorKeyEnc),
     openaiKey: decryptSecret(s.openaiKeyEnc),
     anthropicKey: decryptSecret(s.anthropicKeyEnc),
     geminiKey: decryptSecret(s.geminiKeyEnc),
     bedrockKey: decryptSecret(s.bedrockKeyEnc),
-    awsRegion: s.awsRegion || '',
+    bedrockAccessKeyId: decryptSecret(s.bedrockAccessKeyIdEnc),
+    bedrockSecretAccessKey: decryptSecret(s.bedrockSecretAccessKeyEnc),
+    awsRegion: s.awsRegion || PRODUCT_AWS.region,
+    awsProfile: s.awsProfile || PRODUCT_AWS.profile,
+    awsAccountId: s.awsAccountId || '',
   }
 })
 
+/**
+ * Managed-account IPC.
+ *
+ * These handlers are a thin pass-through by design: the backend is the source
+ * of truth for identity, plan, entitlement, and usage, so nothing is cached or
+ * recomputed here. Errors are flattened to `{ code, message }` so the renderer
+ * can show the standard copy for each error code.
+ */
+async function platformCall<T>(fn: () => Promise<T>): Promise<
+  { ok: true; data: T } | { ok: false; code: string; message: string }
+> {
+  try {
+    return { ok: true, data: await fn() }
+  } catch (err) {
+    if (err instanceof platform.PlatformError) {
+      return { ok: false, code: err.code, message: err.message }
+    }
+    // A transport failure is the offline case; the desktop must say so rather
+    // than assume the subscription is still valid.
+    return {
+      ok: false,
+      code: 'NETWORK_UNAVAILABLE',
+      message: 'Could not reach the AI service. Check your connection.',
+    }
+  }
+}
+
+ipcMain.handle('platform:status', async () => {
+  const signedIn = await platform.isSignedIn()
+  return {
+    configured: platform.isConfigured(),
+    signedIn,
+    email: signedIn ? await platform.currentEmail() : '',
+  }
+})
+
+ipcMain.handle('platform:signIn', async (_e, payload: { email: string; password: string }) =>
+  platformCall(() => platform.signIn(payload.email, payload.password)),
+)
+
+ipcMain.handle('platform:signUp', async (_e, payload: { email: string; password: string }) =>
+  platformCall(() => platform.signUp(payload.email, payload.password)),
+)
+
+ipcMain.handle('platform:signOut', async () => {
+  await platform.signOut()
+  return true
+})
+
+ipcMain.handle('platform:account', async () => platformCall(() => platform.getAccount()))
+
+ipcMain.handle('platform:usage', async () => platformCall(() => platform.getUsage()))
+
 function keyForProvider(s: AppSettings, p: ProviderId): string {
   if (p === 'nvidia') return decryptSecret(s.nvidiaKeyEnc)
+  if (p === 'groq') return decryptSecret(s.groqKeyEnc)
   if (p === 'cursor') return decryptSecret(s.cursorKeyEnc)
   if (p === 'openai') return decryptSecret(s.openaiKeyEnc)
   if (p === 'anthropic') return decryptSecret(s.anthropicKeyEnc)
   if (p === 'bedrock') return decryptSecret(s.bedrockKeyEnc)
+  // The managed provider authenticates with an account token, not an API key.
+  if (p === 'managed') return ''
   return decryptSecret(s.geminiKeyEnc)
+}
+
+function hasBedrockCredentials(s: AppSettings): boolean {
+  const access = decryptSecret(s.bedrockAccessKeyIdEnc)
+  const secret = decryptSecret(s.bedrockSecretAccessKeyEnc)
+  return Boolean(access && secret) || Boolean(decryptSecret(s.bedrockKeyEnc))
+}
+
+/**
+ * Providers that hold their own credential locally.
+ *
+ * `managed` uses the signed-in account, so it is not blocked on a missing key.
+ */
+function needsLocalApiKey(provider: ProviderId): boolean {
+  return provider !== 'managed'
+}
+
+function assertProviderCredentials(s: AppSettings, provider: ProviderId): void {
+  if (provider === 'managed') return
+  if (provider === 'bedrock') {
+    if (hasBedrockCredentials(s)) return
+    throw new Error(
+      'Missing AWS Access Key ID or Secret Access Key. Open Settings → Bedrock to add them.',
+    )
+  }
+  if (needsLocalApiKey(provider) && !keyForProvider(s, provider).trim()) {
+    throw new Error(`Missing API key for ${provider}. Open Settings to add one.`)
+  }
+}
+
+function modelSpecFromSettings(
+  s: AppSettings,
+  provider: ProviderId,
+  model: string,
+  workspace?: string | null,
+  capability?: AiCapability,
+) {
+  return {
+    provider,
+    model,
+    apiKey: keyForProvider(s, provider),
+    region: s.awsRegion || PRODUCT_AWS.region,
+    accessKeyId: decryptSecret(s.bedrockAccessKeyIdEnc),
+    secretAccessKey: decryptSecret(s.bedrockSecretAccessKeyEnc),
+    profile: s.awsProfile || PRODUCT_AWS.profile,
+    expectedAccountId: s.awsAccountId,
+    workspace: workspace ?? null,
+    ...(capability ? { capability } : {}),
+  }
 }
 
 async function appendAudit(workspace: string, row: Record<string, unknown>) {
@@ -425,6 +664,7 @@ ipcMain.handle(
       model?: string
       messages: ChatMessage[]
       workspace?: string | null
+      capability?: AiCapability
     },
   ) => {
     const s = await readSettings()
@@ -437,27 +677,11 @@ ipcMain.handle(
     const model = payload.model || s.model
     const messages = prepareMessages(payload.messages, Boolean(s.redactPii))
 
-    const keyFor = (p: ProviderId) => {
-      if (p === 'nvidia') return decryptSecret(s.nvidiaKeyEnc)
-      if (p === 'cursor') return decryptSecret(s.cursorKeyEnc)
-      if (p === 'openai') return decryptSecret(s.openaiKeyEnc)
-      if (p === 'anthropic') return decryptSecret(s.anthropicKeyEnc)
-      return decryptSecret(s.geminiKeyEnc)
-    }
-
-    const apiKey = keyFor(provider)
-    if (provider !== 'bedrock' && !apiKey.trim()) {
-      throw new Error(`Missing API key for ${provider}. Open Settings to add one.`)
-    }
+    const spec = modelSpecFromSettings(s, provider, model, payload.workspace, payload.capability)
+    assertProviderCredentials(s, provider)
 
     const result = await runCompletion({
-      spec: {
-        provider,
-        model,
-        apiKey,
-        region: s.awsRegion,
-        workspace: payload.workspace ?? null,
-      },
+      spec,
       messages,
     })
     return result.text
@@ -474,6 +698,7 @@ ipcMain.handle(
       model?: string
       messages: ChatMessage[]
       workspace?: string | null
+      capability?: AiCapability
     },
   ) => {
     const s = await readSettings()
@@ -487,30 +712,15 @@ ipcMain.handle(
     const messages = prepareMessages(payload.messages, Boolean(s.redactPii))
     const inputTokens = messages.reduce((n, m) => n + estimateTokens(m.content), 0)
 
-    const keyFor = (p: ProviderId) => {
-      if (p === 'nvidia') return decryptSecret(s.nvidiaKeyEnc)
-      if (p === 'cursor') return decryptSecret(s.cursorKeyEnc)
-      if (p === 'openai') return decryptSecret(s.openaiKeyEnc)
-      if (p === 'anthropic') return decryptSecret(s.anthropicKeyEnc)
-      return decryptSecret(s.geminiKeyEnc)
-    }
-    const apiKey = keyFor(provider)
-    if (provider !== 'bedrock' && !apiKey.trim()) {
-      throw new Error(`Missing API key for ${provider}. Open Settings to add one.`)
-    }
+    const spec = modelSpecFromSettings(s, provider, model, payload.workspace, payload.capability)
+    assertProviderCredentials(s, provider)
 
     const sendChunk = (text: string) => {
       e.sender.send('ai:stream:chunk', { requestId: payload.requestId, text })
     }
 
     const result = await runCompletion({
-      spec: {
-        provider,
-        model,
-        apiKey,
-        region: s.awsRegion,
-        workspace: payload.workspace ?? null,
-      },
+      spec,
       messages,
       onChunk: sendChunk,
     })
@@ -551,10 +761,8 @@ ipcMain.handle(
 
     const provider = (payload.provider || s.provider) as ProviderId
     const model = payload.model || s.model
-    const apiKey = keyForProvider(s, provider)
-    if (provider !== 'bedrock' && !apiKey.trim()) {
-      throw new Error(`Missing API key for ${provider}. Open Settings to add one.`)
-    }
+    const spec = modelSpecFromSettings(s, provider, model, payload.workspace, 'agent')
+    assertProviderCredentials(s, provider)
 
     const send = (data: Record<string, unknown>) => {
       e.sender.send('agent:event', { requestId: payload.requestId, ...data })
@@ -565,13 +773,7 @@ ipcMain.handle(
 
     try {
       const result = await runAgent({
-        spec: {
-          provider,
-          model,
-          apiKey,
-          region: s.awsRegion,
-          workspace: payload.workspace,
-        },
+        spec,
         prompt: payload.prompt,
         history: prepareMessages(payload.history || [], Boolean(s.redactPii)),
         workspace: payload.workspace,

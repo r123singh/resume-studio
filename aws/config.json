@@ -1,0 +1,16 @@
+{
+  "product": "resume-studio",
+  "profile": "resume-studio",
+  "region": "us-east-1",
+  "stackName": "resume-studio-core",
+  "environment": "dev",
+  "forbiddenAccountIds": ["493447423170"],
+  "forbiddenAccountNote": "Flytxt IAM user ramandeep.singh@flytxt.com — never deploy product AI here",
+  "models": [
+    "global.anthropic.claude-sonnet-4-6",
+    "global.anthropic.claude-haiku-4-5",
+    "us.amazon.nova-pro-v1:0",
+    "us.amazon.nova-lite-v1:0",
+    "us.meta.llama3-3-70b-instruct-v1:0"
+  ]
+}

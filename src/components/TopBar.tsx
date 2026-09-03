@@ -113,11 +113,10 @@ export function TopBar({
       <div className="topbar-lead">
         <div className="brand">
           <span className="brand-mark" aria-hidden="true">
-            <FilePlus2 size={13} strokeWidth={2.25} />
+            <FilePlus2 size={14} strokeWidth={1.5} />
           </span>
           Resume Studio
         </div>
-        <span className="topbar-divider" />
         <IconButton icon={FolderOpen} label="Open workspace folder" onClick={onOpenFolder} />
         <IconButton
           icon={Save}
@@ -126,9 +125,6 @@ export function TopBar({
           onClick={onSave}
           disabled={!canSave}
         />
-      </div>
-
-      <div className="topbar-center">
         {canSave || title !== 'Resume Studio' ? (
           <div className="doc-identity" title={title}>
             {directory ? <span className="doc-path">{directory}/</span> : null}
@@ -138,19 +134,19 @@ export function TopBar({
         ) : null}
       </div>
 
-      <div className="topbar-actions">
+      <div className="topbar-center">
         {onCommandPalette ? (
           <Tooltip label="Search commands and files" shortcut="Ctrl+K">
             <button type="button" className="btn ghost command-trigger" onClick={onCommandPalette}>
-              <Search size={13} strokeWidth={1.75} />
+              <Search size={14} strokeWidth={1.5} />
               <span>Search</span>
-              <kbd>Ctrl K</kbd>
+              <kbd>Ctrl+K</kbd>
             </button>
           </Tooltip>
         ) : null}
+      </div>
 
-        <span className="topbar-divider" />
-
+      <div className="topbar-actions">
         {onEvidence ? (
           <IconButton
             icon={Sparkles}
@@ -192,7 +188,7 @@ export function TopBar({
 
         <button
           type="button"
-          className="btn primary"
+          className="btn"
           onClick={onApplyKit}
           disabled={!canApplyKit}
           title="Build resume PDF, cover letter, form snippets and checklist"

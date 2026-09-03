@@ -130,7 +130,7 @@ assert.ok(
 
 // Model factory builds providers without network or real keys.
 const { createModel, supportsToolLoop } = await bundle('electron/agent/models.ts', 'models.mjs')
-for (const provider of ['nvidia', 'openai', 'anthropic', 'gemini', 'bedrock']) {
+for (const provider of ['nvidia', 'groq', 'openai', 'anthropic', 'gemini', 'bedrock']) {
   const model = await createModel({
     provider,
     model: 'test-model',

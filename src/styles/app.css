@@ -13,8 +13,11 @@ body,
   color: var(--text-primary);
   font-family: var(--font-ui);
   font-size: var(--text-body);
+  font-weight: var(--weight-normal);
   line-height: var(--leading-normal);
+  letter-spacing: 0;
   -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
 button,
@@ -31,9 +34,8 @@ select {
 
 /* One consistent focus ring across the whole app. */
 :focus-visible {
-  outline: 2px solid var(--border-focus);
-  outline-offset: 1px;
-  border-radius: var(--radius-sm);
+  outline: 1px solid var(--border-focus);
+  outline-offset: -1px;
 }
 
 ::-webkit-scrollbar {
@@ -47,8 +49,8 @@ select {
 
 ::-webkit-scrollbar-thumb {
   background: var(--border-strong);
-  border-radius: var(--radius-pill);
-  border: 3px solid transparent;
+  border-radius: 0;
+  border: 2px solid transparent;
   background-clip: content-box;
 }
 
@@ -65,24 +67,138 @@ select {
   overflow: hidden;
 }
 
+/* --- Settings as an in-window pane (Cursor-style, not a floating modal) --- */
+.settings-pane {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--background);
+}
+
+.settings-pane-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex: none;
+  height: var(--pane-header-height);
+  padding: 0 var(--space-4);
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.settings-pane-header h2 {
+  margin: 0;
+  font-size: var(--text-caption);
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+
+.settings-pane-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-5) var(--space-5) var(--space-8);
+  background: var(--background);
+}
+
+.settings-pane-inner {
+  max-width: 760px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.bedrock-settings {
+  margin: 0;
+  padding: 0;
+  min-inline-size: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.bedrock-settings-head {
+  padding: 14px 16px 12px;
+}
+
+.bedrock-settings-head h3 {
+  margin: 0 0 6px;
+  font-size: var(--text-body);
+  font-weight: var(--weight-semibold);
+  color: var(--text-primary);
+}
+
+.bedrock-settings-head p {
+  margin: 0;
+  font-size: var(--text-caption);
+  color: var(--text-muted);
+  line-height: 1.45;
+}
+
+.bedrock-kv {
+  border-top: 1px solid var(--border);
+}
+
+.bedrock-kv-row {
+  display: grid;
+  grid-template-columns: 160px minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  margin: 0;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-secondary);
+  font-size: var(--text-secondary-size);
+}
+
+.bedrock-kv-row:last-child {
+  border-bottom: none;
+}
+
+.bedrock-kv-row input {
+  width: 100%;
+}
+
 /* ============================== TOP BAR ============================== */
 
 .topbar {
   display: flex;
   align-items: center;
-  gap: var(--space-3);
+  gap: var(--space-2);
   height: var(--topbar-height);
   flex: 0 0 var(--topbar-height);
-  padding: 0 var(--space-3);
+  padding: 0 var(--space-2);
   border-bottom: 1px solid var(--border);
   background: var(--surface);
+  -webkit-app-region: drag;
+}
+
+.topbar button,
+.topbar a,
+.topbar input,
+.topbar select,
+.topbar .tooltip-host {
+  -webkit-app-region: no-drag;
+}
+
+html[data-platform='win'] .topbar {
+  padding-right: 140px;
+}
+
+html[data-platform='darwin'] .topbar-lead {
+  padding-left: 68px;
 }
 
 .topbar-lead,
 .topbar-actions {
   display: flex;
   align-items: center;
-  gap: var(--space-1);
+  gap: 2px;
   flex-shrink: 0;
 }
 
@@ -93,28 +209,29 @@ select {
   align-items: center;
   justify-content: center;
   gap: var(--space-2);
+  padding: 0 var(--space-4);
 }
 
 .brand {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
-  padding-right: var(--space-2);
-  font-size: var(--text-body);
-  font-weight: var(--weight-semibold);
-  letter-spacing: -0.01em;
-  color: var(--text-primary);
+  gap: 6px;
+  padding: 0 6px 0 4px;
+  font-size: var(--text-secondary-size);
+  font-weight: var(--weight-normal);
+  letter-spacing: 0;
+  color: var(--text-secondary);
   white-space: nowrap;
 }
 
 .brand-mark {
   display: grid;
   place-items: center;
-  width: 22px;
-  height: 22px;
-  border-radius: var(--radius-md);
-  background: var(--accent);
-  color: var(--text-inverse);
+  width: 16px;
+  height: 16px;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-primary);
   flex-shrink: 0;
 }
 
@@ -122,27 +239,27 @@ select {
 .doc-identity {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
+  gap: 6px;
   min-width: 0;
-  max-width: 420px;
-  padding: var(--space-1) var(--space-3);
-  border: 1px solid transparent;
-  border-radius: var(--radius-md);
+  max-width: 280px;
+  padding: 0 6px;
+  border: none;
+  border-radius: 0;
   background: transparent;
   cursor: default;
 }
 
 .doc-name {
-  font-size: var(--text-secondary-size);
-  font-weight: var(--weight-medium);
-  color: var(--text-primary);
+  font-size: var(--text-caption);
+  font-weight: var(--weight-normal);
+  color: var(--text-muted);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
 .doc-path {
-  font-family: var(--font-mono);
+  font-family: var(--font-ui);
   font-size: var(--text-caption);
   color: var(--text-muted);
   white-space: nowrap;
@@ -170,8 +287,8 @@ select {
 
 .topbar-divider {
   width: 1px;
-  height: 18px;
-  margin: 0 var(--space-1);
+  height: 16px;
+  margin: 0 4px;
   background: var(--border);
   flex-shrink: 0;
 }
@@ -182,15 +299,17 @@ select {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: var(--space-2);
-  height: 28px;
-  padding: 0 var(--space-3);
+  gap: 6px;
+  height: var(--control-height);
+  padding: 0 10px;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   background: var(--surface-raised);
   color: var(--text-primary);
-  font-size: var(--text-secondary-size);
-  font-weight: var(--weight-medium);
+  font-size: var(--text-caption);
+  font-weight: var(--weight-normal);
+  line-height: 1;
+  letter-spacing: 0;
   white-space: nowrap;
   cursor: pointer;
   transition:
@@ -229,7 +348,7 @@ select {
   background: var(--accent);
   border-color: var(--accent);
   color: var(--text-inverse);
-  font-weight: var(--weight-medium);
+  font-weight: var(--weight-normal);
 }
 
 .btn.primary:hover:not(:disabled) {
@@ -256,23 +375,22 @@ select {
 }
 
 .btn.sm {
-  height: 24px;
-  padding: 0 var(--space-2);
+  height: 22px;
+  padding: 0 8px;
   font-size: var(--text-caption);
 }
 
-/* Icon-only button. Always paired with a tooltip. */
 .icon-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
+  width: var(--icon-btn);
+  height: var(--icon-btn);
   padding: 0;
   border: 1px solid transparent;
   border-radius: var(--radius-md);
   background: transparent;
-  color: var(--text-secondary);
+  color: var(--text-muted);
   cursor: pointer;
   flex-shrink: 0;
   transition:
@@ -295,8 +413,8 @@ select {
 }
 
 .icon-btn.active {
-  background: var(--accent-subtle);
-  color: var(--accent-text);
+  background: var(--list-active);
+  color: var(--text-primary);
 }
 
 /* ============================== TOOLTIP ============================== */
@@ -309,16 +427,18 @@ select {
 .tooltip-bubble {
   position: absolute;
   z-index: var(--z-overlay);
-  top: calc(100% + 6px);
+  top: calc(100% + 4px);
   left: 50%;
   transform: translateX(-50%);
-  padding: var(--space-1) var(--space-2);
+  padding: 3px 6px;
   border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
   background: var(--surface-raised);
   color: var(--text-primary);
-  box-shadow: var(--shadow-md);
+  box-shadow: var(--shadow-sm);
   font-size: var(--text-caption);
+  font-weight: var(--weight-normal);
+  line-height: 1.3;
   white-space: nowrap;
   pointer-events: none;
 }
@@ -435,13 +555,12 @@ select {
   border-left: 1px solid var(--border);
 }
 
-/* Activity rails flank the workspace, like an IDE. */
 .rail {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: var(--space-1);
-  padding: var(--space-2) 0;
+  gap: 0;
+  padding: 4px 0;
   background: var(--surface);
   border-right: 1px solid var(--border);
   overflow: hidden;
@@ -460,54 +579,56 @@ select {
   position: relative;
   display: grid;
   place-items: center;
-  width: 32px;
-  height: 32px;
+  width: 48px;
+  height: 48px;
   border: none;
-  border-radius: var(--radius-md);
+  border-radius: 0;
   background: transparent;
   color: var(--text-muted);
   cursor: pointer;
-  transition:
-    background var(--duration-fast) var(--ease),
-    color var(--duration-fast) var(--ease);
+  transition: color var(--duration-fast) var(--ease);
 }
 
 .rail-btn:hover {
-  background: var(--surface-hover);
+  background: transparent;
   color: var(--text-primary);
 }
 
 .rail-btn.active {
-  color: var(--accent-text);
-  background: var(--accent-subtle);
+  color: var(--rail-active);
+  background: transparent;
 }
 
-/* Active indicator bar, VS Code style. */
 .rail-btn.active::before {
   content: '';
   position: absolute;
-  left: -6px;
-  top: 50%;
-  transform: translateY(-50%);
+  left: 0;
+  top: 8px;
+  bottom: 8px;
   width: 2px;
-  height: 16px;
-  border-radius: var(--radius-pill);
-  background: var(--accent);
+  border-radius: 0;
+  background: var(--rail-active);
 }
 
 .rail.right .rail-btn.active::before {
   left: auto;
-  right: -6px;
+  right: 0;
 }
 
 .rail-badge {
   position: absolute;
-  top: 3px;
-  right: 3px;
+  top: 8px;
+  right: 10px;
   width: 6px;
   height: 6px;
   border-radius: var(--radius-pill);
   background: var(--accent);
+}
+
+.rail .icon-btn {
+  width: 48px;
+  height: 36px;
+  border-radius: 0;
 }
 
 .pane-header {
@@ -515,15 +636,16 @@ select {
   align-items: center;
   justify-content: space-between;
   gap: var(--space-2);
-  height: 34px;
-  flex: 0 0 34px;
-  padding: 0 var(--space-2) 0 var(--space-3);
-  font-size: var(--text-caption);
+  height: var(--pane-header-height);
+  flex: 0 0 var(--pane-header-height);
+  padding: 0 8px 0 16px;
+  font-size: 11px;
   font-weight: var(--weight-semibold);
-  letter-spacing: 0.04em;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: var(--text-muted);
-  border-bottom: 1px solid var(--border);
+  color: var(--text-secondary);
+  border-bottom: none;
+  background: var(--surface);
 }
 
 .pane-header-actions {
@@ -543,14 +665,15 @@ select {
 .statusbar {
   display: flex;
   align-items: center;
-  gap: var(--space-3);
+  gap: 0;
   height: var(--statusbar-height);
   flex: 0 0 var(--statusbar-height);
-  padding: 0 var(--space-3);
+  padding: 0 8px;
   border-top: 1px solid var(--border);
   background: var(--surface);
-  font-size: var(--text-caption);
-  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: var(--weight-normal);
+  color: var(--text-secondary);
 }
 
 .statusbar-spacer {
@@ -560,10 +683,11 @@ select {
 .status-item {
   display: inline-flex;
   align-items: center;
-  gap: var(--space-1);
-  padding: 0 var(--space-1);
+  gap: 4px;
+  height: 100%;
+  padding: 0 8px;
   border: none;
-  border-radius: var(--radius-sm);
+  border-radius: 0;
   background: transparent;
   color: inherit;
   font: inherit;
@@ -617,44 +741,46 @@ button.status-item:hover {
 .pane-resizer:hover::after,
 .pane-resizer.dragging::after {
   background: var(--accent);
-  opacity: 0.5;
+  opacity: 1;
 }
 
 .workspace-name {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  padding: var(--space-2) var(--space-3);
-  font-size: var(--text-secondary-size);
-  color: var(--text-secondary);
-  font-family: var(--font-mono);
-  border-bottom: 1px solid var(--border);
+  padding: 0 16px 8px;
+  font-size: 11px;
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  font-family: var(--font-ui);
+  border-bottom: none;
 }
 
 .tree {
   overflow: auto;
-  padding: var(--space-2) var(--space-2) var(--space-4);
+  padding: 0 0 var(--space-4);
 }
 
 .tree-label {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
+  gap: 6px;
   width: 100%;
+  height: var(--tree-row);
   text-align: left;
   background: transparent;
   border: none;
-  border-radius: var(--radius-md);
-  color: var(--text-secondary);
-  padding: var(--space-1) var(--space-2);
-  font-size: var(--text-body);
-  line-height: 20px;
+  border-radius: 0;
+  color: var(--text-primary);
+  padding: 0 8px;
+  font-size: 13px;
+  font-weight: var(--weight-normal);
+  line-height: var(--tree-row);
   cursor: pointer;
   white-space: nowrap;
   overflow: hidden;
-  transition:
-    background var(--duration-fast) var(--ease),
-    color var(--duration-fast) var(--ease);
 }
 
 .tree-label > svg {
@@ -668,28 +794,31 @@ button.status-item:hover {
 }
 
 .tree-label.dir {
-  color: var(--text-muted);
-  font-size: var(--text-caption);
-  font-weight: var(--weight-semibold);
-  letter-spacing: 0.03em;
-  text-transform: uppercase;
-  cursor: default;
-  margin-top: var(--space-2);
+  color: var(--text-primary);
+  font-weight: var(--weight-normal);
+  cursor: pointer;
+  gap: 2px;
 }
 
+.tree-label.dir:hover,
 .tree-label.file:hover {
   background: var(--surface-hover);
   color: var(--text-primary);
 }
 
+.tree-chevron {
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+
 .tree-label.file.active {
-  background: var(--accent-subtle);
-  color: var(--accent-text);
-  font-weight: var(--weight-medium);
+  background: var(--list-active);
+  color: var(--text-primary);
+  font-weight: var(--weight-normal);
 }
 
 .tree-label.file.active > svg {
-  color: var(--accent-text);
+  color: var(--text-primary);
 }
 
 /* ---- Outline: markdown headings as a resume section navigator ---- */
@@ -704,20 +833,19 @@ button.status-item:hover {
 .outline-item {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
+  gap: 6px;
   width: 100%;
-  padding: var(--space-1) var(--space-2);
+  height: var(--tree-row);
+  padding: 0 8px;
   border: none;
-  border-radius: var(--radius-md);
+  border-radius: 0;
   background: transparent;
-  color: var(--text-secondary);
-  font-size: var(--text-body);
-  line-height: 20px;
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: var(--weight-normal);
+  line-height: var(--tree-row);
   text-align: left;
   cursor: pointer;
-  transition:
-    background var(--duration-fast) var(--ease),
-    color var(--duration-fast) var(--ease);
 }
 
 .outline-item:hover {
@@ -726,8 +854,8 @@ button.status-item:hover {
 }
 
 .outline-item.active {
-  background: var(--accent-subtle);
-  color: var(--accent-text);
+  background: var(--list-active);
+  color: var(--text-primary);
 }
 
 .outline-item.level-1 {
@@ -772,6 +900,119 @@ button.status-item:hover {
   text-transform: none;
   letter-spacing: 0;
   font-weight: var(--weight-normal);
+}
+
+/* --- Editor tabs (Cursor-style multi-file strip) ------------------------- */
+.editor-tabs {
+  display: flex;
+  align-items: stretch;
+  height: var(--tab-height);
+  min-height: var(--tab-height);
+  overflow-x: auto;
+  overflow-y: hidden;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  scrollbar-width: thin;
+}
+
+.editor-tabs::-webkit-scrollbar {
+  height: 4px;
+}
+
+.editor-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px 0 12px;
+  max-width: 220px;
+  border: none;
+  border-right: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-muted);
+  font-family: var(--font-ui);
+  font-size: 13px;
+  font-weight: var(--weight-normal);
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+  position: relative;
+}
+
+.editor-tab:hover {
+  background: var(--surface-hover);
+  color: var(--text-secondary);
+}
+
+.editor-tab.active {
+  background: var(--background);
+  color: var(--text-primary);
+}
+
+.editor-tab.active::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 1px;
+  background: var(--rail-active);
+}
+
+.editor-tab-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.editor-tab-close {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  flex: none;
+}
+
+.editor-tab-close:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+/* The × is hidden until the tab is hovered/active, revealing over the dot. */
+.editor-tab-x {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  opacity: 0;
+}
+
+.editor-tab:hover .editor-tab-x,
+.editor-tab.active .editor-tab-x {
+  opacity: 1;
+}
+
+/* A dirty tab shows a centred dot until the × takes over on hover. */
+.editor-tab-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-secondary);
+}
+
+.editor-tab:hover .editor-tab-dot,
+.editor-tab.active:hover .editor-tab-dot {
+  opacity: 0;
+}
+
+.editor-tab.dirty .editor-tab-name {
+  font-style: normal;
 }
 
 .editor-header-path {
@@ -859,69 +1100,69 @@ button.status-item:hover {
 .tab {
   display: inline-flex;
   align-items: center;
-  gap: var(--space-2);
+  gap: 6px;
   flex-shrink: 0;
   background: transparent;
   border: none;
-  border-bottom: 2px solid transparent;
-  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
-  color: var(--text-secondary);
-  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid transparent;
+  border-radius: 0;
+  color: var(--text-muted);
+  padding: 8px 10px;
   margin-bottom: -1px;
-  font-size: var(--text-secondary-size);
-  font-weight: var(--weight-medium);
+  font-size: 13px;
+  font-weight: var(--weight-normal);
   white-space: nowrap;
   cursor: pointer;
-  transition:
-    color var(--duration-fast) var(--ease),
-    background var(--duration-fast) var(--ease);
 }
 
 .tab:hover {
   color: var(--text-primary);
-  background: var(--surface-hover);
+  background: transparent;
 }
 
 .tab.active {
-  color: var(--accent-text);
-  border-bottom-color: var(--accent);
+  color: var(--text-primary);
+  border-bottom-color: var(--rail-active);
 }
 
 .chat-log {
   flex: 1;
   overflow: auto;
-  padding: 12px;
+  padding: 12px 16px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 16px;
 }
 
 .chat-bubble {
-  padding: 10px 12px;
-  border-radius: 10px;
+  padding: 0;
+  border-radius: 0;
   font-size: 13px;
-  line-height: 1.45;
+  line-height: 1.5;
   white-space: pre-wrap;
+  border: none;
+  background: transparent;
 }
 
 .chat-bubble.user {
-  background: var(--accent-subtle);
-  border: 1px solid var(--accent-border);
-  align-self: flex-end;
-  max-width: 92%;
+  background: transparent;
+  border: none;
+  align-self: stretch;
+  max-width: 100%;
+  color: var(--text-secondary);
 }
 
 .chat-bubble.assistant,
 .chat-bubble.system {
-  background: var(--surface-hover);
-  border: 1px solid var(--border);
-  align-self: flex-start;
-  max-width: 95%;
+  background: transparent;
+  border: none;
+  align-self: stretch;
+  max-width: 100%;
 }
 
 .chat-form {
   border-top: 1px solid var(--border);
-  padding: var(--space-3);
+  padding: 8px 12px 10px;
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
@@ -944,15 +1185,15 @@ input,
 textarea,
 select {
   width: 100%;
+  height: 26px;
   background: var(--surface-inset);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
-  padding: var(--space-2) var(--space-3);
-  font-size: var(--text-body);
+  padding: 0 8px;
+  font-size: 13px;
+  font-weight: var(--weight-normal);
   color: var(--text-primary);
-  transition:
-    border-color var(--duration-fast) var(--ease),
-    background var(--duration-fast) var(--ease);
+  transition: border-color var(--duration-fast) var(--ease);
 }
 
 input::placeholder,
@@ -970,8 +1211,8 @@ input:focus,
 textarea:focus,
 select:focus {
   outline: none;
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-subtle);
+  border-color: var(--border-focus);
+  box-shadow: none;
 }
 
 input:disabled,
@@ -989,8 +1230,11 @@ input[type='radio'] {
 
 textarea {
   resize: vertical;
+  height: auto;
+  min-height: 72px;
+  padding: 6px 8px;
   font-family: var(--font-mono);
-  font-size: var(--text-secondary-size);
+  font-size: 13px;
   line-height: 1.5;
 }
 
@@ -1008,65 +1252,66 @@ label {
 }
 
 .welcome-inner {
-  max-width: 520px;
-  text-align: center;
+  max-width: 480px;
+  text-align: left;
 }
 
 .welcome-mark {
   display: grid;
   place-items: center;
-  width: 44px;
-  height: 44px;
-  margin: 0 auto var(--space-5);
+  width: 32px;
+  height: 32px;
+  margin: 0 0 var(--space-4);
   border: 1px solid var(--border);
-  border-radius: var(--radius-xl);
+  border-radius: var(--radius-md);
   background: var(--surface);
-  color: var(--accent);
+  color: var(--text-secondary);
 }
 
 .eyebrow {
   color: var(--text-muted);
-  letter-spacing: 0.1em;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
-  font-size: var(--text-caption);
+  font-size: 11px;
   font-weight: var(--weight-semibold);
   margin: 0 0 var(--space-2);
 }
 
 .welcome h1 {
-  font-size: var(--text-display);
+  font-size: 22px;
   font-weight: var(--weight-semibold);
-  line-height: var(--leading-tight);
-  margin: 0 0 var(--space-3);
-  letter-spacing: -0.02em;
+  line-height: 1.2;
+  margin: 0 0 var(--space-2);
+  letter-spacing: 0;
+  color: var(--text-primary);
 }
 
 .lede {
   color: var(--text-secondary);
-  font-size: var(--text-section);
-  line-height: var(--leading-normal);
-  margin: 0 auto var(--space-6);
-  max-width: 40em;
+  font-size: 13px;
+  line-height: 1.5;
+  margin: 0 0 var(--space-5);
+  max-width: 42em;
 }
 
 .welcome-actions {
   display: flex;
   gap: var(--space-2);
   flex-wrap: wrap;
-  justify-content: center;
-  margin-bottom: var(--space-6);
+  justify-content: flex-start;
+  margin-bottom: var(--space-5);
 }
 
 .welcome-steps {
   margin: 0;
-  padding: var(--space-4);
+  padding: 0;
   list-style: none;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  background: var(--surface);
+  border: none;
+  border-radius: 0;
+  background: transparent;
   color: var(--text-secondary);
-  font-size: var(--text-secondary-size);
-  line-height: 1.9;
+  font-size: 13px;
+  line-height: 1.55;
   text-align: left;
 }
 
@@ -1110,8 +1355,8 @@ label {
   width: min(520px, 100%);
   background: var(--surface-raised);
   border: 1px solid var(--border);
-  border-radius: var(--radius-xl);
-  padding: var(--space-5);
+  border-radius: var(--radius-lg);
+  padding: var(--space-4);
   box-shadow: var(--shadow-lg);
   animation: modal-in var(--duration-slow) var(--ease);
 }
@@ -1133,9 +1378,9 @@ label {
 
 .modal h2 {
   margin: 0;
-  font-size: var(--text-title);
+  font-size: 13px;
   font-weight: var(--weight-semibold);
-  letter-spacing: -0.01em;
+  letter-spacing: 0;
 }
 
 .muted {
@@ -1146,6 +1391,18 @@ label {
 .muted.small {
   font-size: var(--text-caption);
   color: var(--text-muted);
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.field > span:first-child {
+  font-size: 13px;
+  font-weight: var(--weight-normal);
+  color: var(--text-secondary);
 }
 
 .field a {
@@ -1548,18 +1805,24 @@ label {
 
 .palette-modal {
   width: min(640px, 100%);
-  padding: 10px;
+  padding: 0;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
 }
 
 .palette-input {
   width: 100%;
+  height: 40px;
   background: transparent;
   border: none;
   border-bottom: 1px solid var(--border);
   border-radius: 0;
   color: var(--text-primary);
-  font-size: var(--text-section);
-  padding: var(--space-3) var(--space-3) var(--space-4);
+  font-size: 13px;
+  padding: 0 12px;
   font-family: var(--font-ui);
   outline: none;
 }
@@ -1598,10 +1861,10 @@ label {
   background: transparent;
   border: none;
   color: var(--text-secondary);
-  padding: var(--space-2) var(--space-3);
-  border-radius: var(--radius-md);
+  padding: 6px 12px;
+  border-radius: 0;
   cursor: pointer;
-  font-size: var(--text-body);
+  font-size: 13px;
 }
 
 .palette-item.active,
@@ -1611,8 +1874,8 @@ label {
 }
 
 .palette-item.active {
-  background: var(--accent-subtle);
-  color: var(--accent-text);
+  background: var(--list-active);
+  color: var(--text-primary);
 }
 
 /*
@@ -1806,15 +2069,19 @@ label {
 
 .privacy-fieldset {
   border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 10px 12px 4px;
-  margin: 12px 0;
+  border-radius: var(--radius-md);
+  padding: 8px 12px 4px;
+  margin: 8px 0;
+  background: var(--surface);
 }
 
 .privacy-fieldset legend {
   padding: 0 6px;
-  color: var(--muted);
-  font-size: 12px;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
 }
 
 .check-row {
@@ -1824,6 +2091,66 @@ label {
   font-size: 13px;
   margin-bottom: 8px;
   color: var(--text);
+}
+
+/* Managed AI account panel */
+.account-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.account-panel .row {
+  display: flex;
+  align-items: center;
+}
+
+.account-panel .row.between {
+  justify-content: space-between;
+}
+
+.account-panel .row.gap {
+  gap: 8px;
+}
+
+.account-panel .row.small {
+  font-size: 12px;
+}
+
+.error-text {
+  color: var(--danger, #f87171);
+  font-size: 13px;
+  margin: 0;
+}
+
+.warn-text {
+  color: var(--warning, #fbbf24);
+  font-size: 13px;
+  margin: 0;
+}
+
+.usage-meter {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.meter-track {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--surface-inset);
+  overflow: hidden;
+}
+
+.meter-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--accent);
+  transition: width var(--motion-fast, 120ms) ease;
+}
+
+.meter-fill[data-warn='true'] {
+  background: var(--warning, #fbbf24);
 }
 
 .check-row input {
@@ -2387,16 +2714,24 @@ label {
 /* ---- Command trigger in the top bar ---- */
 
 .command-trigger {
-  gap: var(--space-2);
-  min-width: 160px;
+  gap: 8px;
+  min-width: 280px;
+  max-width: 420px;
+  width: min(420px, 46vw);
+  height: 26px;
   justify-content: flex-start;
   color: var(--text-muted);
-  background: var(--surface-inset);
-  border-color: var(--border);
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  font-size: 12px;
+  font-weight: var(--weight-normal);
 }
 
 .command-trigger:hover:not(:disabled) {
   color: var(--text-secondary);
+  background: var(--surface-hover);
+  border-color: var(--border-strong);
 }
 
 .command-trigger kbd {
@@ -2404,10 +2739,10 @@ label {
   padding: 1px 5px;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  background: var(--surface);
+  background: transparent;
   color: var(--text-muted);
-  font-family: var(--font-mono);
-  font-size: 10px;
+  font-family: var(--font-ui);
+  font-size: 11px;
 }
 
 .pane-hint {
@@ -2438,12 +2773,12 @@ label {
 .empty-state-icon {
   display: grid;
   place-items: center;
-  width: 36px;
-  height: 36px;
+  width: 28px;
+  height: 28px;
   margin-bottom: var(--space-1);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  background: var(--surface-inset);
+  border: none;
+  border-radius: 0;
+  background: transparent;
   color: var(--text-muted);
 }
 
@@ -2516,12 +2851,12 @@ label {
   z-index: var(--z-sticky);
   display: flex;
   align-items: center;
-  gap: var(--space-1);
-  padding: var(--space-1);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-lg);
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
   background: var(--surface-raised);
-  box-shadow: var(--shadow-lg);
+  box-shadow: var(--shadow-md);
   animation: actionbar-in var(--duration-base) var(--ease);
 }
 
@@ -2536,11 +2871,11 @@ label {
   display: inline-flex;
   align-items: center;
   gap: var(--space-1);
-  padding: 0 var(--space-2) 0 var(--space-1);
+  padding: 0 8px 0 6px;
   border-right: 1px solid var(--border);
-  color: var(--accent-text);
-  font-size: var(--text-caption);
-  font-weight: var(--weight-medium);
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: var(--weight-normal);
   white-space: nowrap;
 }
 
@@ -2633,7 +2968,7 @@ label {
     display: none;
   }
 
-  .topbar-center {
+  .doc-identity {
     display: none;
   }
 }

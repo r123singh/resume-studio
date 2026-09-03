@@ -35,7 +35,7 @@ export function IconButton({
         aria-label={label}
         aria-pressed={active}
       >
-        <Icon size={size} strokeWidth={1.75} />
+        <Icon size={size} strokeWidth={1.5} />
       </button>
     </Tooltip>
   )

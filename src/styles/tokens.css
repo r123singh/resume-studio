@@ -1,13 +1,12 @@
 /*
- * Resume Studio design tokens.
+ * Cursor-like workbench tokens.
  *
- * Every component consumes semantic tokens (--surface, --text-secondary, ...)
- * rather than raw colors, so theming is a single-layer change. The primitive
- * ramps below are the only place raw hex values are allowed.
+ * Chrome uses the OS UI font at 13px (Segoe UI on Windows). Color, density,
+ * and radius follow Cursor / VS Code Dark Modern rather than a SaaS palette.
  */
 
 :root {
-  /* ---- Spacing scale ---- */
+  /* ---- Spacing (4px grid, IDE density) ---- */
   --space-1: 4px;
   --space-2: 8px;
   --space-3: 12px;
@@ -17,148 +16,155 @@
   --space-8: 32px;
   --space-10: 40px;
 
-  /* ---- Radius ---- */
-  --radius-sm: 4px;
-  --radius-md: 6px;
-  --radius-lg: 8px;
-  --radius-xl: 12px;
+  /* ---- Radius: tight, almost square ---- */
+  --radius-sm: 2px;
+  --radius-md: 4px;
+  --radius-lg: 6px;
+  --radius-xl: 8px;
   --radius-pill: 999px;
 
   /* ---- Typography ---- */
   --font-ui:
-    'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
-  --font-mono: 'JetBrains Mono', 'IBM Plex Mono', Consolas, monospace;
+    'Segoe UI', 'Segoe UI Variable Text', 'Segoe UI Variable', system-ui, -apple-system,
+    BlinkMacSystemFont, sans-serif;
+  --font-mono: 'Cascadia Code', 'Cascadia Mono', Consolas, 'Courier New', monospace;
 
-  --text-display: 24px;
-  --text-title: 18px;
-  --text-section: 14px;
+  --text-display: 22px;
+  --text-title: 13px;
+  --text-section: 13px;
   --text-body: 13px;
   --text-secondary-size: 12px;
   --text-caption: 11px;
 
-  --leading-tight: 1.25;
-  --leading-normal: 1.5;
+  --leading-tight: 1.2;
+  --leading-normal: 1.4;
 
   --weight-normal: 400;
   --weight-medium: 500;
   --weight-semibold: 600;
 
   /* ---- Motion ---- */
-  --duration-fast: 120ms;
-  --duration-base: 160ms;
-  --duration-slow: 200ms;
+  --duration-fast: 80ms;
+  --duration-base: 120ms;
+  --duration-slow: 160ms;
   --ease: cubic-bezier(0.2, 0, 0.13, 1);
 
-  /* ---- Layout ---- */
-  --topbar-height: 44px;
-  --statusbar-height: 26px;
-  --rail-width: 44px;
+  /* ---- Layout (Cursor / VS Code chrome heights) ---- */
+  --topbar-height: 35px;
+  --statusbar-height: 22px;
+  --rail-width: 48px;
+  --tab-height: 35px;
+  --pane-header-height: 35px;
+  --tree-row: 22px;
+  --icon-btn: 22px;
+  --control-height: 24px;
   --z-sticky: 10;
   --z-overlay: 100;
   --z-modal: 200;
   --z-toast: 300;
 }
 
-/* ============================ DARK (default) ============================ */
+/* ============================ DARK (Cursor) ============================ */
 :root,
 [data-theme='dark'] {
   color-scheme: dark;
 
-  --background: #0d0e11;
-  --surface: #131519;
-  --surface-raised: #191c21;
-  --surface-hover: #1d2026;
-  --surface-active: #23262e;
-  --surface-inset: #0a0b0e;
+  --background: #181818;
+  --surface: #141414;
+  --surface-raised: #1f1f1f;
+  --surface-hover: #2a2a2a;
+  --surface-active: #37373d;
+  --surface-inset: #1a1a1a;
+  --list-active: #37373d;
 
-  --border: #24272e;
-  --border-strong: #32363f;
-  --border-focus: #4c6ef5;
+  --border: #2b2b2b;
+  --border-subtle: #252525;
+  --border-strong: #3c3c3c;
+  --border-focus: #007fd4;
 
-  --text-primary: #e6e8ec;
-  --text-secondary: #a0a6b0;
-  --text-muted: #6f7681;
+  --text-primary: #cccccc;
+  --text-secondary: #bbbbbb;
+  --text-muted: #6e6e6e;
   --text-inverse: #ffffff;
 
-  --accent: #5b7cfa;
-  --accent-hover: #6d8bfb;
-  --accent-active: #4a6ce8;
-  --accent-subtle: rgba(91, 124, 250, 0.14);
-  --accent-border: rgba(91, 124, 250, 0.4);
-  --accent-text: #a9bcff;
+  --accent: #007fd4;
+  --accent-hover: #1c8adf;
+  --accent-active: #006bb3;
+  --accent-subtle: rgba(0, 127, 212, 0.16);
+  --accent-border: rgba(0, 127, 212, 0.45);
+  --accent-text: #75beff;
 
-  --success: #3fb950;
-  --success-subtle: rgba(63, 185, 80, 0.14);
-  --warning: #d29922;
-  --warning-subtle: rgba(210, 153, 34, 0.14);
-  --error: #f2555a;
-  --error-subtle: rgba(242, 85, 90, 0.14);
-  --info: #58a6ff;
+  --success: #89d185;
+  --success-subtle: rgba(137, 209, 133, 0.12);
+  --warning: #cca700;
+  --warning-subtle: rgba(204, 167, 0, 0.12);
+  --error: #f14c4c;
+  --error-subtle: rgba(241, 76, 76, 0.12);
+  --info: #75beff;
 
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
-  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.45);
-  --shadow-lg: 0 16px 48px rgba(0, 0, 0, 0.55);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.45);
+  --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.45);
+  --shadow-lg: 0 16px 40px rgba(0, 0, 0, 0.55);
 
-  --overlay: rgba(6, 7, 9, 0.72);
-  --selection: rgba(91, 124, 250, 0.3);
+  --overlay: rgba(0, 0, 0, 0.55);
+  --selection: rgba(38, 79, 120, 0.85);
 
-  /* Paper surface for document preview — stays light-on-dark deliberately. */
-  --paper: #16181d;
-  --paper-text: #e6e8ec;
-  --paper-border: #262a32;
+  --paper: #1e1e1e;
+  --paper-text: #d4d4d4;
+  --paper-border: #2b2b2b;
+  --rail-active: #ffffff;
 }
 
 /* ================================ LIGHT ================================ */
 [data-theme='light'] {
   color-scheme: light;
 
-  --background: #f6f7f9;
-  --surface: #ffffff;
+  --background: #ffffff;
+  --surface: #f3f3f3;
   --surface-raised: #ffffff;
-  --surface-hover: #f1f3f5;
-  --surface-active: #e7eaee;
-  --surface-inset: #fbfbfc;
+  --surface-hover: #e8e8e8;
+  --surface-active: #e4e6f1;
+  --surface-inset: #ffffff;
+  --list-active: #e4e6f1;
 
-  --border: #e3e6ea;
-  --border-strong: #cdd2d9;
-  --border-focus: #4c6ef5;
+  --border: #e5e5e5;
+  --border-subtle: #ececec;
+  --border-strong: #cecece;
+  --border-focus: #0090f1;
 
-  --text-primary: #16181d;
-  --text-secondary: #5a616c;
-  --text-muted: #868e99;
+  --text-primary: #3b3b3b;
+  --text-secondary: #616161;
+  --text-muted: #8b8b8b;
   --text-inverse: #ffffff;
 
-  --accent: #4c6ef5;
-  --accent-hover: #3f5fe0;
-  --accent-active: #3552cc;
-  --accent-subtle: rgba(76, 110, 245, 0.09);
-  --accent-border: rgba(76, 110, 245, 0.35);
-  --accent-text: #3552cc;
+  --accent: #0078d4;
+  --accent-hover: #026ec1;
+  --accent-active: #005a9e;
+  --accent-subtle: rgba(0, 120, 212, 0.1);
+  --accent-border: rgba(0, 120, 212, 0.35);
+  --accent-text: #005a9e;
 
-  --success: #1a7f37;
-  --success-subtle: rgba(26, 127, 55, 0.1);
-  --warning: #9a6700;
-  --warning-subtle: rgba(154, 103, 0, 0.1);
-  --error: #cf222e;
-  --error-subtle: rgba(207, 34, 46, 0.1);
-  --info: #0969da;
+  --success: #388a34;
+  --success-subtle: rgba(56, 138, 52, 0.1);
+  --warning: #bf8803;
+  --warning-subtle: rgba(191, 136, 3, 0.1);
+  --error: #e51400;
+  --error-subtle: rgba(229, 20, 0, 0.08);
+  --info: #0078d4;
 
-  --shadow-sm: 0 1px 2px rgba(16, 24, 40, 0.06);
-  --shadow-md: 0 4px 12px rgba(16, 24, 40, 0.1);
-  --shadow-lg: 0 16px 48px rgba(16, 24, 40, 0.16);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.08);
+  --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.12);
+  --shadow-lg: 0 16px 40px rgba(0, 0, 0, 0.16);
 
-  --overlay: rgba(16, 24, 40, 0.4);
-  --selection: rgba(76, 110, 245, 0.18);
+  --overlay: rgba(0, 0, 0, 0.32);
+  --selection: rgba(0, 120, 212, 0.22);
 
   --paper: #ffffff;
-  --paper-text: #16181d;
-  --paper-border: #e3e6ea;
+  --paper-text: #3b3b3b;
+  --paper-border: #e5e5e5;
+  --rail-active: #3b3b3b;
 }
 
-/*
- * Legacy aliases. The original stylesheet was written against these names;
- * mapping them here re-themes every existing panel without touching each rule.
- */
 :root,
 [data-theme='dark'],
 [data-theme='light'] {

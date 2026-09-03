@@ -122,9 +122,10 @@ app.setPath('userData', USER_DATA)
 
 ipcMain.handle('settings:get', () => ({
   provider: 'nvidia',
-  model: 'meta/llama-3.3-70b-instruct',
+  model: 'nvidia/nemotron-3-nano-30b-a3b',
   lastWorkspace: WORKSPACE,
   hasNvidia: true,
+  hasGroq: false,
   hasCursor: false,
   hasOpenAI: false,
   hasAnthropic: false,
@@ -140,8 +141,9 @@ ipcMain.handle('settings:get', () => ({
 ipcMain.handle('settings:set', () => true)
 ipcMain.handle('settings:getSecrets', () => ({
   provider: 'nvidia',
-  model: 'meta/llama-3.3-70b-instruct',
+  model: 'nvidia/nemotron-3-nano-30b-a3b',
   nvidiaKey: '',
+  groqKey: '',
   cursorKey: '',
   openaiKey: '',
   anthropicKey: '',

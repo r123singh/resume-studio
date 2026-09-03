@@ -21,6 +21,8 @@ export default defineConfig({
                 '@strands-agents/sdk',
                 /^@strands-agents\/sdk\/.*/,
                 '@aws-sdk/client-bedrock-runtime',
+                '@aws-sdk/client-sts',
+                '@aws-sdk/credential-provider-ini',
                 '@anthropic-ai/sdk',
                 '@google/genai',
                 'openai',

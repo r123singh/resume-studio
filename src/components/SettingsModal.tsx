@@ -1,20 +1,24 @@
 import { useEffect, useState } from 'react'
 import {
   FREE_PROVIDERS,
+  isManagedProvider,
   MODEL_OPTIONS,
   PAID_PROVIDERS,
   supportsAgentMode,
   type ProviderId,
 } from '../lib/ai/providers'
+import { AccountPanel } from './AccountPanel'
 
 type Props = {
   onClose: () => void
 }
 
 const PROVIDER_LABELS: Record<ProviderId, string> = {
+  managed: 'Resume Studio AI (account)',
   nvidia: 'NVIDIA NIM (free)',
+  groq: 'Groq (free)',
   cursor: 'Cursor SDK',
-  bedrock: 'Amazon Bedrock',
+  bedrock: 'Bedrock',
   openai: 'OpenAI',
   anthropic: 'Anthropic',
   gemini: 'Gemini',
@@ -30,24 +34,29 @@ const AWS_REGIONS = [
   'ap-northeast-1',
 ]
 
-export function SettingsModal({ onClose }: Props) {
+export function SettingsPane({ onClose }: Props) {
   const [provider, setProvider] = useState<ProviderId>('nvidia')
   const [model, setModel] = useState(MODEL_OPTIONS.nvidia[0])
   const [nvidiaKey, setNvidiaKey] = useState('')
+  const [groqKey, setGroqKey] = useState('')
   const [cursorKey, setCursorKey] = useState('')
   const [openaiKey, setOpenaiKey] = useState('')
   const [anthropicKey, setAnthropicKey] = useState('')
   const [geminiKey, setGeminiKey] = useState('')
-  const [bedrockKey, setBedrockKey] = useState('')
+  const [bedrockAccessKeyId, setBedrockAccessKeyId] = useState('')
+  const [bedrockSecretAccessKey, setBedrockSecretAccessKey] = useState('')
   const [awsRegion, setAwsRegion] = useState('us-east-1')
   const [agentMode, setAgentMode] = useState(true)
   const [flags, setFlags] = useState({
     nvidia: false,
+    groq: false,
     cursor: false,
     openai: false,
     anthropic: false,
     gemini: false,
     bedrock: false,
+    bedrockAccessKeyId: false,
+    bedrockSecretAccessKey: false,
   })
   const [showPaid, setShowPaid] = useState(false)
   const [allowExternalAi, setAllowExternalAi] = useState(true)
@@ -64,11 +73,14 @@ export function SettingsModal({ onClose }: Props) {
       setModel(s.model)
       setFlags({
         nvidia: s.hasNvidia,
+        groq: s.hasGroq,
         cursor: s.hasCursor,
         openai: s.hasOpenAI,
         anthropic: s.hasAnthropic,
         gemini: s.hasGemini,
         bedrock: s.hasBedrock,
+        bedrockAccessKeyId: s.hasBedrockAccessKeyId,
+        bedrockSecretAccessKey: s.hasBedrockSecretAccessKey,
       })
       setAwsRegion(s.awsRegion || 'us-east-1')
       setAgentMode(s.agentMode !== false)
@@ -90,6 +102,15 @@ export function SettingsModal({ onClose }: Props) {
 
   useEffect(() => {
     const models = MODEL_OPTIONS[provider]
+    // The managed provider has no client-side model list; the backend routes it.
+    if (!models.length) return
+    if (provider === 'bedrock') {
+      const fromOtherProvider = (
+        Object.entries(MODEL_OPTIONS) as [ProviderId, string[]][]
+      ).some(([id, list]) => id !== 'bedrock' && list.includes(model))
+      if (fromOtherProvider || !model.trim()) setModel(models[0])
+      return
+    }
     if (!models.includes(model)) setModel(models[0])
   }, [provider, model])
 
@@ -101,11 +122,13 @@ export function SettingsModal({ onClose }: Props) {
         provider,
         model,
         nvidiaKey: nvidiaKey.trim() || undefined,
+        groqKey: groqKey.trim() || undefined,
         cursorKey: cursorKey.trim() || undefined,
         openaiKey: openaiKey.trim() || undefined,
         anthropicKey: anthropicKey.trim() || undefined,
         geminiKey: geminiKey.trim() || undefined,
-        bedrockKey: bedrockKey.trim() || undefined,
+        bedrockAccessKeyId: bedrockAccessKeyId.trim() || undefined,
+        bedrockSecretAccessKey: bedrockSecretAccessKey.trim() || undefined,
         awsRegion,
         agentMode,
         allowExternalAi,
@@ -116,18 +139,23 @@ export function SettingsModal({ onClose }: Props) {
       const s = await window.resumeStudio.getSettings()
       setFlags({
         nvidia: s.hasNvidia,
+        groq: s.hasGroq,
         cursor: s.hasCursor,
         openai: s.hasOpenAI,
         anthropic: s.hasAnthropic,
         gemini: s.hasGemini,
         bedrock: s.hasBedrock,
+        bedrockAccessKeyId: s.hasBedrockAccessKeyId,
+        bedrockSecretAccessKey: s.hasBedrockSecretAccessKey,
       })
       setNvidiaKey('')
+      setGroqKey('')
       setCursorKey('')
       setOpenaiKey('')
       setAnthropicKey('')
       setGeminiKey('')
-      setBedrockKey('')
+      setBedrockAccessKeyId('')
+      setBedrockSecretAccessKey('')
       setMessage('Saved. Keys are stored encrypted on this machine.')
     } catch (err) {
       setMessage(err instanceof Error ? err.message : String(err))
@@ -137,23 +165,18 @@ export function SettingsModal({ onClose }: Props) {
   }
 
   return (
-    <div className="modal-backdrop" onClick={onClose} role="presentation">
-      <div
-        className="modal"
-        role="dialog"
-        aria-modal="true"
-        aria-label="Settings"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="modal-header">
-          <h2>Settings</h2>
-          <button type="button" className="btn ghost" onClick={onClose}>
-            Close
-          </button>
-        </div>
+    <section className="settings-pane" role="region" aria-label="Settings">
+      <div className="settings-pane-header">
+        <h2>Settings</h2>
+        <button type="button" className="btn ghost" onClick={onClose}>
+          Close
+        </button>
+      </div>
+      <div className="settings-pane-body">
+        <div className="settings-pane-inner">
         <p className="muted">
-          Default: free NVIDIA NIM or Cursor SDK. Paid providers are optional. Keys stay on this
-          machine except when calling the selected provider.
+          Default: free NVIDIA NIM, Groq, or Cursor SDK. Paid providers are optional. Keys stay on
+          this machine except when calling the selected provider.
         </p>
 
         <label className="field">
@@ -179,16 +202,97 @@ export function SettingsModal({ onClose }: Props) {
           </select>
         </label>
 
-        <label className="field">
-          <span>Model</span>
-          <select value={model} onChange={(e) => setModel(e.target.value)}>
-            {MODEL_OPTIONS[provider].map((m) => (
-              <option key={m} value={m}>
-                {m}
-              </option>
-            ))}
-          </select>
-        </label>
+        {isManagedProvider(provider) ? (
+          <fieldset className="privacy-fieldset">
+            <legend>Account</legend>
+            <AccountPanel />
+          </fieldset>
+        ) : provider !== 'bedrock' ? (
+          <label className="field">
+            <span>Model</span>
+            <select value={model} onChange={(e) => setModel(e.target.value)}>
+              {MODEL_OPTIONS[provider].map((m) => (
+                <option key={m} value={m}>
+                  {m}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : null}
+
+        {provider === 'bedrock' || flags.bedrock ? (
+          <fieldset className="bedrock-settings">
+            <div className="bedrock-settings-head">
+              <h3>Bedrock</h3>
+              <p>
+                Configure Bedrock to use models through your AWS account. Access keys stay encrypted
+                on this machine.
+              </p>
+            </div>
+            <div className="bedrock-kv">
+              <label className="bedrock-kv-row">
+                <span>Access Key ID</span>
+                <input
+                  type="text"
+                  autoComplete="off"
+                  spellCheck={false}
+                  placeholder={
+                    flags.bedrockAccessKeyId ? '•••••••• (leave blank to keep)' : 'AWS Access Key ID'
+                  }
+                  value={bedrockAccessKeyId}
+                  onChange={(e) => setBedrockAccessKeyId(e.target.value)}
+                />
+              </label>
+              <label className="bedrock-kv-row">
+                <span>Secret Access Key</span>
+                <input
+                  type="password"
+                  autoComplete="new-password"
+                  placeholder={
+                    flags.bedrockSecretAccessKey
+                      ? '•••••••• (leave blank to keep)'
+                      : 'AWS Secret Access Key'
+                  }
+                  value={bedrockSecretAccessKey}
+                  onChange={(e) => setBedrockSecretAccessKey(e.target.value)}
+                />
+              </label>
+              <label className="bedrock-kv-row">
+                <span>Region</span>
+                <input
+                  type="text"
+                  list="aws-regions"
+                  placeholder="e.g. us-east-1"
+                  value={awsRegion}
+                  onChange={(e) => setAwsRegion(e.target.value)}
+                />
+              </label>
+              {provider === 'bedrock' ? (
+                <label className="bedrock-kv-row">
+                  <span>Test Model</span>
+                  <input
+                    type="text"
+                    list="bedrock-models"
+                    spellCheck={false}
+                    placeholder="e.g. us.anthropic.claude-sonnet-4-6"
+                    value={model}
+                    onChange={(e) => setModel(e.target.value)}
+                  />
+                </label>
+              ) : null}
+            </div>
+            <datalist id="aws-regions">
+              {AWS_REGIONS.map((r) => (
+                <option key={r} value={r} />
+              ))}
+            </datalist>
+            <datalist id="bedrock-models">
+              {MODEL_OPTIONS.bedrock.map((m) => (
+                <option key={m} value={m} />
+              ))}
+            </datalist>
+          </fieldset>
+        ) : null}
 
         <fieldset className="privacy-fieldset">
           <legend>Agent</legend>
@@ -211,7 +315,7 @@ export function SettingsModal({ onClose }: Props) {
           ) : (
             <p className="muted small">
               {PROVIDER_LABELS[provider]} returns finished text with no tool calls, so agent mode is
-              unavailable. Pick Bedrock, NVIDIA, OpenAI, Anthropic, or Gemini to enable it.
+              unavailable. Pick Groq, NVIDIA, Bedrock, OpenAI, Anthropic, or Gemini to enable it.
             </p>
           )}
         </fieldset>
@@ -224,7 +328,7 @@ export function SettingsModal({ onClose }: Props) {
               checked={allowExternalAi}
               onChange={(e) => setAllowExternalAi(e.target.checked)}
             />
-            <span>Allow external AI (NVIDIA / Cursor / paid providers)</span>
+            <span>Allow external AI (NVIDIA / Groq / Cursor / paid providers)</span>
           </label>
           <label className="check-row">
             <input
@@ -272,6 +376,24 @@ export function SettingsModal({ onClose }: Props) {
           </label>
         ) : null}
 
+        {provider === 'groq' || flags.groq ? (
+          <label className="field">
+            <span>
+              Groq API key {flags.groq ? '(saved)' : ''} — from{' '}
+              <a href="https://console.groq.com/keys" target="_blank" rel="noreferrer">
+                console.groq.com
+              </a>
+              {' '}(no credit card)
+            </span>
+            <input
+              type="password"
+              placeholder={flags.groq ? '•••••••• (leave blank to keep)' : 'gsk_...'}
+              value={groqKey}
+              onChange={(e) => setGroqKey(e.target.value)}
+            />
+          </label>
+        ) : null}
+
         {provider === 'cursor' || flags.cursor ? (
           <label className="field">
             <span>Cursor API key {flags.cursor ? '(saved)' : ''} — CURSOR_API_KEY / service account</span>
@@ -291,33 +413,6 @@ export function SettingsModal({ onClose }: Props) {
         >
           {showPaid ? 'Hide paid providers' : 'Show paid providers (optional)'}
         </button>
-
-        {provider === 'bedrock' || flags.bedrock ? (
-          <>
-            <label className="field">
-              <span>AWS region</span>
-              <select value={awsRegion} onChange={(e) => setAwsRegion(e.target.value)}>
-                {AWS_REGIONS.map((r) => (
-                  <option key={r} value={r}>
-                    {r}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="field">
-              <span>
-                Bedrock API key {flags.bedrock ? '(saved)' : ''} — optional; leave blank to use your
-                AWS credential chain (profile, env vars, SSO)
-              </span>
-              <input
-                type="password"
-                placeholder={flags.bedrock ? '•••••••• (leave blank to keep)' : 'ABSK... (optional)'}
-                value={bedrockKey}
-                onChange={(e) => setBedrockKey(e.target.value)}
-              />
-            </label>
-          </>
-        ) : null}
 
         {showPaid ? (
           <>
@@ -358,7 +453,8 @@ export function SettingsModal({ onClose }: Props) {
             {saving ? 'Saving…' : 'Save settings'}
           </button>
         </div>
+        </div>
       </div>
-    </div>
+    </section>
   )
 }

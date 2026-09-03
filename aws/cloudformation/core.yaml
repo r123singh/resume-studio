@@ -1,0 +1,182 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Resume Studio product AWS environment (dev or prod). Least-privilege Bedrock
+  for the desktop app, a future API role with the same policy, a monthly cost
+  alarm, and a private artifacts bucket. Deploy this ONLY into an AWS account
+  owned by Resume Studio — never into a third-party/work account.
+
+Parameters:
+  Environment:
+    Type: String
+    AllowedValues: [dev, prod]
+    Default: dev
+  AlertEmail:
+    Type: String
+    Description: Email for the 80% monthly budget alarm (must confirm the SNS/Budgets subscription).
+  MonthlyBudgetUsd:
+    Type: Number
+    Default: 20
+    MinValue: 1
+    Description: Soft monthly cap. Bedrock is pay-per-token; keep this low until traffic exists.
+  ArtifactBucketName:
+    Type: String
+    Default: ''
+    Description: >
+      Optional global S3 name for release artifacts. Leave blank to derive
+      resume-studio-<env>-artifacts-<account>.
+
+Conditions:
+  HasExplicitBucketName: !Not [!Equals [!Ref ArtifactBucketName, '']]
+
+Resources:
+  BedrockInvokePolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: !Sub resume-studio-${Environment}-bedrock-invoke
+      Description: Invoke on-demand Bedrock models and inference profiles only.
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: InvokeFoundationModels
+            Effect: Allow
+            Action:
+              - bedrock:InvokeModel
+              - bedrock:InvokeModelWithResponseStream
+            Resource:
+              - !Sub arn:aws:bedrock:${AWS::Region}::foundation-model/*
+              - !Sub arn:aws:bedrock:*::foundation-model/*
+          - Sid: InvokeInferenceProfiles
+            Effect: Allow
+            Action:
+              - bedrock:InvokeModel
+              - bedrock:InvokeModelWithResponseStream
+              - bedrock:GetInferenceProfile
+            Resource:
+              - !Sub arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/*
+              - !Sub arn:aws:bedrock:*:${AWS::AccountId}:inference-profile/*
+          - Sid: ListModelsForSettings
+            Effect: Allow
+            Action:
+              - bedrock:ListFoundationModels
+              - bedrock:ListInferenceProfiles
+            Resource: '*'
+
+  DesktopUser:
+    Type: AWS::IAM::User
+    Properties:
+      UserName: !Sub resume-studio-${Environment}-desktop
+      Path: /resume-studio/
+      ManagedPolicyArns:
+        - !Ref BedrockInvokePolicy
+      Tags:
+        - Key: Product
+          Value: resume-studio
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Purpose
+          Value: local-desktop-bedrock
+
+  FutureApiRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub resume-studio-${Environment}-api
+      Description: Assume this from Lambda when Resume Studio adds a server-side AI proxy.
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Ref BedrockInvokePolicy
+      Tags:
+        - Key: Product
+          Value: resume-studio
+        - Key: Environment
+          Value: !Ref Environment
+
+  ArtifactsBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: !If
+        - HasExplicitBucketName
+        - !Ref ArtifactBucketName
+        - !Sub resume-studio-${Environment}-artifacts-${AWS::AccountId}
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      VersioningConfiguration:
+        Status: Enabled
+      Tags:
+        - Key: Product
+          Value: resume-studio
+        - Key: Environment
+          Value: !Ref Environment
+
+  MonthlyBudget:
+    Type: AWS::Budgets::Budget
+    Properties:
+      Budget:
+        BudgetName: !Sub resume-studio-${Environment}-monthly
+        BudgetType: COST
+        TimeUnit: MONTHLY
+        BudgetLimit:
+          Amount: !Ref MonthlyBudgetUsd
+          Unit: USD
+        CostTypes:
+          IncludeCredit: false
+          IncludeRefund: false
+          IncludeTax: true
+      NotificationsWithSubscribers:
+        - Notification:
+            NotificationType: ACTUAL
+            ComparisonOperator: GREATER_THAN
+            Threshold: 80
+            ThresholdType: PERCENTAGE
+          Subscribers:
+            - SubscriptionType: EMAIL
+              Address: !Ref AlertEmail
+        - Notification:
+            NotificationType: ACTUAL
+            ComparisonOperator: GREATER_THAN
+            Threshold: 100
+            ThresholdType: PERCENTAGE
+          Subscribers:
+            - SubscriptionType: EMAIL
+              Address: !Ref AlertEmail
+
+Outputs:
+  AccountId:
+    Description: Product AWS account. Paste this into Settings as Expected account ID.
+    Value: !Ref AWS::AccountId
+    Export:
+      Name: !Sub resume-studio-${Environment}-account-id
+  Region:
+    Value: !Ref AWS::Region
+  DesktopUserName:
+    Description: Create a Bedrock long-term API key for this IAM user, or access keys for profile resume-studio.
+    Value: !Ref DesktopUser
+  DesktopUserArn:
+    Value: !GetAtt DesktopUser.Arn
+  FutureApiRoleArn:
+    Value: !GetAtt FutureApiRole.Arn
+    Export:
+      Name: !Sub resume-studio-${Environment}-api-role
+  BedrockPolicyArn:
+    Value: !Ref BedrockInvokePolicy
+  ArtifactsBucketName:
+    Value: !Ref ArtifactsBucket
+    Export:
+      Name: !Sub resume-studio-${Environment}-artifacts
+  ProfileName:
+    Description: AWS CLI / SDK profile the desktop app will use (never default).
+    Value: resume-studio

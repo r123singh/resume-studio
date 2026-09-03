@@ -1,0 +1,319 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Resume Studio AI Backend Control Layer. Deploys the control-plane Lambda,
+  its Function URL (response streaming), the single-table datastore, the
+  platform secret, and least-privilege IAM. One stack per environment.
+
+Parameters:
+  Environment:
+    Type: String
+    AllowedValues: [dev, staging, prod]
+    Default: dev
+    Description: Environment name; forms part of every resource name.
+
+  BedrockRegion:
+    Type: String
+    Default: us-east-1
+    Description: Region whose Bedrock models the control plane invokes.
+
+  AllowedModelArns:
+    Type: CommaDelimitedList
+    Default: >-
+      arn:aws:bedrock:*::foundation-model/anthropic.claude-3-5-haiku-20241022-v1:0,
+      arn:aws:bedrock:*::foundation-model/anthropic.claude-3-5-sonnet-20241022-v2:0,
+      arn:aws:bedrock:*::foundation-model/amazon.nova-lite-v1:0
+    Description: >
+      Explicit allow-list of invocable foundation models. Cross-region inference
+      profiles additionally need the matching inference-profile ARNs.
+
+  LogRetentionDays:
+    Type: Number
+    Default: 30
+    AllowedValues: [1, 3, 7, 14, 30, 60, 90, 180, 365]
+
+  MonthlyBudgetUsd:
+    Type: Number
+    Default: 25
+    Description: Alarm threshold for estimated monthly AI spend.
+
+  AlarmEmail:
+    Type: String
+    Default: ''
+    Description: Optional email for cost and error alarms.
+
+Conditions:
+  IsProd: !Equals [!Ref Environment, prod]
+  HasAlarmEmail: !Not [!Equals [!Ref AlarmEmail, '']]
+
+Resources:
+  # ---------------------------------------------------------------- data ----
+  PlatformTable:
+    Type: AWS::DynamoDB::Table
+    # Retaining production data is worth the manual cleanup on a stack delete.
+    UpdateReplacePolicy: Retain
+    DeletionPolicy: !If [IsProd, Retain, Delete]
+    Properties:
+      TableName: !Sub 'resume-studio-${Environment}-platform'
+      # On-demand keeps an idle MVP effectively free and still absorbs spikes.
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+        - AttributeName: sk
+          AttributeType: S
+        - AttributeName: gsi1pk
+          AttributeType: S
+        - AttributeName: gsi1sk
+          AttributeType: S
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+        - AttributeName: sk
+          KeyType: RANGE
+      GlobalSecondaryIndexes:
+        - IndexName: gsi1
+          KeySchema:
+            - AttributeName: gsi1pk
+              KeyType: HASH
+            - AttributeName: gsi1sk
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+      SSESpecification:
+        SSEEnabled: true
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: !If [IsProd, true, false]
+      Tags:
+        - Key: Product
+          Value: resume-studio
+        - Key: Environment
+          Value: !Ref Environment
+
+  # ------------------------------------------------------------- secrets ----
+  PlatformSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub 'resume-studio/${Environment}/platform'
+      Description: JWT signing key and billing webhook secret.
+      GenerateSecretString:
+        # The JWT secret is generated in place so no human ever handles it and
+        # it never passes through a template parameter or a shell history.
+        SecretStringTemplate: '{"billingWebhookSecret":""}'
+        GenerateStringKey: jwtSecret
+        PasswordLength: 64
+        ExcludePunctuation: true
+      Tags:
+        - Key: Product
+          Value: resume-studio
+        - Key: Environment
+          Value: !Ref Environment
+
+  # ------------------------------------------------------------------ IAM ----
+  ControlPlaneRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub 'resume-studio-${Environment}-control-plane'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: platform-data
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:DeleteItem
+                  - dynamodb:Query
+                Resource:
+                  - !GetAtt PlatformTable.Arn
+                  - !Sub '${PlatformTable.Arn}/index/*'
+        - PolicyName: platform-secrets
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource: !Ref PlatformSecret
+        - PolicyName: bedrock-invoke
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # Scoped to an explicit model list rather than "*", so adding a
+              # model is a deliberate infrastructure change.
+              - Effect: Allow
+                Action:
+                  - bedrock:InvokeModel
+                  - bedrock:InvokeModelWithResponseStream
+                Resource: !Ref AllowedModelArns
+              - Effect: Allow
+                Action:
+                  - bedrock:InvokeModel
+                  - bedrock:InvokeModelWithResponseStream
+                Resource: !Sub 'arn:aws:bedrock:*:${AWS::AccountId}:inference-profile/*'
+
+  # --------------------------------------------------------------- compute ----
+  ControlPlaneLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/resume-studio-${Environment}-control-plane'
+      RetentionInDays: !Ref LogRetentionDays
+
+  ControlPlaneFunction:
+    Type: AWS::Lambda::Function
+    DependsOn: ControlPlaneLogGroup
+    Properties:
+      FunctionName: !Sub 'resume-studio-${Environment}-control-plane'
+      Runtime: nodejs20.x
+      Handler: index.handler
+      Role: !GetAtt ControlPlaneRole.Arn
+      MemorySize: 1024
+      # Long enough for a slow streaming completion, short enough to bound cost.
+      Timeout: 300
+      Architectures: [arm64]
+      Code:
+        ZipFile: |
+          export const handler = async () => ({
+            statusCode: 503,
+            body: JSON.stringify({
+              error: { code: 'INTERNAL_ERROR', message: 'Deploy the bundle with scripts/deploy-backend.mjs.' },
+            }),
+          })
+      Environment:
+        Variables:
+          ENVIRONMENT: !Ref Environment
+          TABLE_NAME: !Ref PlatformTable
+          PLATFORM_SECRET_ID: !Ref PlatformSecret
+          BEDROCK_REGION: !Ref BedrockRegion
+          BILLING_PROVIDER: manual
+          NODE_OPTIONS: '--enable-source-maps'
+      Tags:
+        - Key: Product
+          Value: resume-studio
+        - Key: Environment
+          Value: !Ref Environment
+
+  ControlPlaneUrl:
+    Type: AWS::Lambda::Url
+    Properties:
+      TargetFunctionArn: !GetAtt ControlPlaneFunction.Arn
+      # The application authenticates with its own JWTs; IAM auth would require
+      # AWS credentials on the desktop, which is the thing being eliminated.
+      AuthType: NONE
+      InvokeMode: RESPONSE_STREAM
+      Cors:
+        AllowOrigins: ['*']
+        AllowMethods: ['GET', 'POST']
+        AllowHeaders: ['authorization', 'content-type', 'x-signature']
+        MaxAge: 3600
+
+  # Public Function URLs need BOTH actions as of Oct 2025. Granting only
+  # InvokeFunctionUrl returns 403 AccessDeniedException to every unsigned call
+  # (signup, login, health) even with AuthType NONE.
+  ControlPlaneUrlPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt ControlPlaneFunction.Arn
+      Action: lambda:InvokeFunctionUrl
+      Principal: '*'
+      FunctionUrlAuthType: NONE
+
+  ControlPlaneUrlInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt ControlPlaneFunction.Arn
+      Action: lambda:InvokeFunction
+      Principal: '*'
+      InvokedViaFunctionUrl: true
+
+  # ---------------------------------------------------------- observability ----
+  AlarmTopic:
+    Type: AWS::SNS::Topic
+    Condition: HasAlarmEmail
+    Properties:
+      TopicName: !Sub 'resume-studio-${Environment}-alarms'
+      Subscription:
+        - Protocol: email
+          Endpoint: !Ref AlarmEmail
+
+  ErrorRateAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: HasAlarmEmail
+    Properties:
+      AlarmName: !Sub 'resume-studio-${Environment}-control-plane-errors'
+      AlarmDescription: Control plane is returning unhandled errors.
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref ControlPlaneFunction
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 5
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlarmTopic]
+
+  AiSpendBudget:
+    Type: AWS::Budgets::Budget
+    Properties:
+      Budget:
+        BudgetName: !Sub 'resume-studio-${Environment}-ai-spend'
+        BudgetType: COST
+        TimeUnit: MONTHLY
+        BudgetLimit:
+          Amount: !Ref MonthlyBudgetUsd
+          Unit: USD
+        CostFilters:
+          Service:
+            - Amazon Bedrock
+            - AWS Lambda
+            - Amazon DynamoDB
+      NotificationsWithSubscribers: !If
+        - HasAlarmEmail
+        - - Notification:
+              NotificationType: ACTUAL
+              ComparisonOperator: GREATER_THAN
+              Threshold: 80
+              ThresholdType: PERCENTAGE
+            Subscribers:
+              - SubscriptionType: EMAIL
+                Address: !Ref AlarmEmail
+          - Notification:
+              NotificationType: FORECASTED
+              ComparisonOperator: GREATER_THAN
+              Threshold: 100
+              ThresholdType: PERCENTAGE
+            Subscribers:
+              - SubscriptionType: EMAIL
+                Address: !Ref AlarmEmail
+        - !Ref AWS::NoValue
+
+Outputs:
+  ApiUrl:
+    Description: Base URL for the desktop client (RESUME_STUDIO_API_URL).
+    Value: !GetAtt ControlPlaneUrl.FunctionUrl
+    Export:
+      Name: !Sub 'resume-studio-${Environment}-api-url'
+
+  TableName:
+    Value: !Ref PlatformTable
+
+  FunctionName:
+    Value: !Ref ControlPlaneFunction
+
+  SecretArn:
+    Value: !Ref PlatformSecret

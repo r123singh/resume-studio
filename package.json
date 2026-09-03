@@ -17,7 +17,13 @@
     "electron:build": "npm run build && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --win nsis",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.node.json --noEmit && tsc -p tsconfig.electron.json --noEmit",
     "smoke:agent": "node scripts/smoke-agent.mjs",
-    "smoke:evidence": "node scripts/smoke-evidence-apply.mjs"
+    "smoke:evidence": "node scripts/smoke-evidence-apply.mjs",
+    "aws:bootstrap": "node scripts/aws-bootstrap.mjs",
+    "aws:verify": "node scripts/aws-verify.mjs",
+    "backend:install": "npm --prefix backend install",
+    "backend:test": "npm --prefix backend test",
+    "backend:typecheck": "npm --prefix backend run typecheck",
+    "backend:deploy": "node scripts/deploy-backend.mjs"
   },
   "build": {
     "appId": "com.resumestudio.app",
@@ -61,6 +67,8 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.109.1",
+    "@aws-sdk/client-sts": "^3.1113.0",
+    "@aws-sdk/credential-provider-ini": "^3.973.14",
     "@cursor/sdk": "^1.0.26",
     "@google/genai": "^2.16.0",
     "@monaco-editor/react": "^4.7.0",
