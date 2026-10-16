@@ -8,7 +8,7 @@ type Props = {
 const STEPS = [
   'Open or create a workspace folder — we scaffold base-resume.md, job-preferences.md, resumes/ and apply-kits/.',
   'Paste your master resume into base-resume.md and set your target keywords in preferences.',
-  'Shortlist roles in Job hunt, or paste a job description into Tailor.',
+  'Shortlist roles in Job hunt, paste a JD into Tailor, drop a recruiter WhatsApp thread into the Ping desk, or source jobs from your mail inbox.',
   'Review every AI edit as a diff before it touches a file.',
   'Export a PDF or build a full apply kit when you are ready to submit.',
 ]

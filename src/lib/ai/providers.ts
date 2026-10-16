@@ -1,7 +1,6 @@
 export type ProviderId =
   | 'nvidia'
-  | 'groq'
-  | 'cursor'
+  | 'ollama'
   | 'openai'
   | 'anthropic'
   | 'gemini'
@@ -39,23 +38,13 @@ export const MODEL_OPTIONS: Record<ProviderId, string[]> = {
   // free-tier, tool-calling chat models. IDs are `publisher/slug` exactly as
   // the API expects them.
   nvidia: [
-    'nvidia/nemotron-3-nano-30b-a3b',
-    'openai/gpt-oss-120b',
     'openai/gpt-oss-20b',
+    'openai/gpt-oss-120b',
     'nvidia/nemotron-3-super-120b-a12b',
     'google/gemma-4-31b-it',
-    'mistralai/mistral-nemotron',
-    'deepseek-ai/deepseek-v4-flash-0731',
   ],
-  // Production chat models from console.groq.com/docs/models. Whisper, TTS,
-  // Compound, and preview IDs are omitted — those are not resume-edit LLMs.
-  groq: [
-    'llama-3.3-70b-versatile',
-    'llama-3.1-8b-instant',
-    'openai/gpt-oss-120b',
-    'openai/gpt-oss-20b',
-  ],
-  cursor: ['composer-2.5', 'composer-2', 'gpt-5.3-codex'],
+  // Fetched live from `GET /api/tags` when Ollama is selected in Settings.
+  ollama: [],
   openai: ['gpt-4o-mini', 'gpt-4o', 'gpt-4.1-mini', 'gpt-4.1'],
   anthropic: [
     'claude-3-5-haiku-latest',
@@ -65,8 +54,15 @@ export const MODEL_OPTIONS: Record<ProviderId, string[]> = {
   gemini: ['gemini-3.8-flash'],
 }
 
-export const FREE_PROVIDERS: ProviderId[] = ['nvidia', 'groq', 'cursor']
-export const PAID_PROVIDERS: ProviderId[] = ['managed', 'bedrock', 'openai', 'anthropic', 'gemini']
+export const FREE_PROVIDERS: ProviderId[] = ['nvidia', 'ollama']
+/** Bring-your-own-key providers. The managed account is omitted until it can launch. */
+export const PAID_PROVIDERS: ProviderId[] = ['bedrock', 'openai', 'anthropic', 'gemini']
+
+/** Providers that run on localhost — not blocked when external AI is disabled. */
+export const LOCAL_PROVIDERS: ProviderId[] = ['ollama']
+
+export const isLocalProvider = (provider: ProviderId): boolean =>
+  LOCAL_PROVIDERS.includes(provider)
 
 /** Providers whose credentials and quota are owned by the backend account. */
 export const MANAGED_PROVIDERS: ProviderId[] = ['managed']
@@ -77,8 +73,7 @@ export const isManagedProvider = (provider: ProviderId): boolean =>
 export const PROVIDER_LABELS: Record<ProviderId, string> = {
   managed: 'Resume Studio AI',
   nvidia: 'NVIDIA NIM (free)',
-  groq: 'Groq (free)',
-  cursor: 'Cursor',
+  ollama: 'Ollama (local)',
   openai: 'OpenAI',
   anthropic: 'Anthropic',
   gemini: 'Google Gemini',
@@ -86,15 +81,14 @@ export const PROVIDER_LABELS: Record<ProviderId, string> = {
 }
 
 /**
- * Cursor returns a finished string with no tool-call channel, so it cannot
- * drive the agent loop. The managed provider can, because the backend forwards
- * Bedrock Converse tool events end to end.
+ * Every direct provider can drive the agent loop. The managed provider can
+ * too, because the backend forwards Bedrock Converse tool events end to end.
  */
 export const AGENT_CAPABLE_PROVIDERS: ProviderId[] = [
   'managed',
   'bedrock',
   'nvidia',
-  'groq',
+  'ollama',
   'openai',
   'anthropic',
   'gemini',
@@ -138,6 +132,7 @@ export async function runAgent(args: {
   history?: ChatMessage[]
   workspace?: string | null
   activeRelativePath?: string | null
+  selectedText?: string | null
   provider?: ProviderId
   model?: string
   maxTurns?: number
@@ -151,6 +146,7 @@ export async function runAgent(args: {
     history: args.history,
     workspace: args.workspace || null,
     activeRelativePath: args.activeRelativePath || null,
+    selectedText: args.selectedText || null,
     provider: args.provider,
     model: args.model,
     maxTurns: args.maxTurns,

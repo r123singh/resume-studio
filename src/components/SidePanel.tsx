@@ -28,6 +28,8 @@ type Props = {
   onOpenJob: (url: string) => void
   onOpenKit: (notes: string) => void
   onInterviewPrep?: (row: ApplicationRow) => void
+  onWhatsAppPing?: (row: ApplicationRow) => void
+  onMailReply?: (row: ApplicationRow) => void
 }
 
 export function TrackerPanel({
@@ -38,6 +40,8 @@ export function TrackerPanel({
   onOpenJob,
   onOpenKit,
   onInterviewPrep,
+  onWhatsAppPing,
+  onMailReply,
 }: Props) {
   const [filter, setFilter] = useState<Filter>('all')
 
@@ -94,6 +98,7 @@ export function TrackerPanel({
               <div className="tracker-meta">
                 <span>{row.date || '—'}</span>
                 {row.location ? <span>{row.location}</span> : null}
+                {row.source ? <span>{row.source}</span> : null}
               </div>
               <div className="tracker-actions">
                 <button
@@ -112,6 +117,26 @@ export function TrackerPanel({
                 >
                   Open kit
                 </button>
+                {onWhatsAppPing && /channel:\s*whatsapp/i.test(row.notes) ? (
+                  <button
+                    type="button"
+                    className="btn ghost"
+                    disabled={busy}
+                    onClick={() => onWhatsAppPing(row)}
+                  >
+                    WhatsApp
+                  </button>
+                ) : null}
+                {onMailReply && /channel:\s*email/i.test(row.notes) ? (
+                  <button
+                    type="button"
+                    className="btn ghost"
+                    disabled={busy}
+                    onClick={() => onMailReply(row)}
+                  >
+                    Reply
+                  </button>
+                ) : null}
                 {onInterviewPrep ? (
                   <button
                     type="button"
@@ -366,24 +391,32 @@ type SideProps = {
   onOpenJob: (url: string) => void
   onOpenKit: (notes: string) => void
   onInterviewPrepRow?: (row: ApplicationRow) => void
+  onWhatsAppPingRow?: (row: ApplicationRow) => void
+  onMailReplyRow?: (row: ApplicationRow) => void
   onOpenAbsolute?: (absolutePath: string, relativePath: string) => void | Promise<void>
   onTreeRefresh?: () => void | Promise<void>
   onFeedback?: (id: string, rating: 'up' | 'down') => void
   evidenceSlot?: React.ReactNode
+  pingSlot?: React.ReactNode
+  mailSlot?: React.ReactNode
   focusTracker?: boolean
   focusHunt?: boolean
   focusRoles?: boolean
   focusEvidence?: boolean
+  focusPing?: boolean
+  focusMail?: boolean
   mode?: PanelMode
   onModeChange?: (mode: PanelMode) => void
 }
 
-export type PanelMode = 'hunt' | 'tailor' | 'edit' | 'tracker' | 'roles' | 'evidence'
+export type PanelMode = 'hunt' | 'tailor' | 'edit' | 'tracker' | 'roles' | 'evidence' | 'ping' | 'mail'
 
 const PANEL_TITLES: Record<PanelMode, string> = {
   evidence: 'Evidence',
   hunt: 'Job hunt',
   tailor: 'Tailor',
+  ping: 'WhatsApp desk',
+  mail: 'Mail inbox',
   edit: 'Assistant',
   tracker: 'Tracker',
   roles: 'Role variants',
@@ -391,6 +424,8 @@ const PANEL_TITLES: Record<PanelMode, string> = {
 
 const PANEL_HINTS: Record<PanelMode, string> = {
   evidence: 'Ctrl+Shift+E',
+  ping: 'Ctrl+Shift+M',
+  mail: 'Ctrl+Shift+L',
   hunt: '',
   tailor: '',
   edit: '',
@@ -422,14 +457,20 @@ export function SidePanel({
   onOpenJob,
   onOpenKit,
   onInterviewPrepRow,
+  onWhatsAppPingRow,
+  onMailReplyRow,
   onOpenAbsolute,
   onTreeRefresh,
   onFeedback,
   evidenceSlot,
+  pingSlot,
+  mailSlot,
   focusTracker,
   focusHunt,
   focusRoles,
   focusEvidence,
+  focusPing,
+  focusMail,
   mode: controlledMode,
   onModeChange,
 }: SideProps) {
@@ -461,6 +502,14 @@ export function SidePanel({
   }, [focusEvidence])
 
   useEffect(() => {
+    if (focusPing) setMode('ping')
+  }, [focusPing])
+
+  useEffect(() => {
+    if (focusMail) setMode('mail')
+  }, [focusMail])
+
+  useEffect(() => {
     if (mode === 'tracker') onRefreshApps()
   }, [mode, onRefreshApps])
 
@@ -475,6 +524,8 @@ export function SidePanel({
 
       {mode === 'evidence' ? (
         <div className="evidence-scroll">{evidenceSlot}</div>
+      ) : mode === 'ping' ? (
+        <div className="evidence-scroll">{pingSlot}</div>
       ) : mode === 'tracker' ? (
         <TrackerPanel
           rows={applications}
@@ -484,7 +535,11 @@ export function SidePanel({
           onOpenJob={onOpenJob}
           onOpenKit={onOpenKit}
           onInterviewPrep={onInterviewPrepRow}
+          onWhatsAppPing={onWhatsAppPingRow}
+          onMailReply={onMailReplyRow}
         />
+      ) : mode === 'mail' ? (
+        <div className="evidence-scroll">{mailSlot}</div>
       ) : mode === 'hunt' ? (
         <HuntPanel
           busy={busy}

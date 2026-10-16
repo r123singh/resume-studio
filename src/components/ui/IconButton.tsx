@@ -9,7 +9,7 @@ type Props = {
   disabled?: boolean
   active?: boolean
   size?: number
-  placement?: 'top' | 'bottom'
+  placement?: 'top' | 'bottom' | 'left' | 'right'
   className?: string
 }
 

@@ -10,8 +10,7 @@ export type TreeNode = {
 
 export type ProviderId =
   | 'nvidia'
-  | 'groq'
-  | 'cursor'
+  | 'ollama'
   | 'openai'
   | 'anthropic'
   | 'gemini'
@@ -71,13 +70,17 @@ export type AccountState = {
   feature_flags: Record<string, boolean>
 }
 
+export type OllamaModelInfo = {
+  name: string
+  size?: number
+  modifiedAt?: string
+}
+
 export type PublicSettings = {
   provider: ProviderId
   model: string
   lastWorkspace: string | null
-  hasNvidia: boolean
-  hasGroq: boolean
-  hasCursor: boolean
+  ollamaBaseUrl: string
   hasOpenAI: boolean
   hasAnthropic: boolean
   hasGemini: boolean
@@ -92,6 +95,14 @@ export type PublicSettings = {
   redactPii: boolean
   confirmLargeEdits: boolean
   allowWebResearch: boolean
+  imapHost: string
+  imapPort: number
+  imapUser: string
+  imapMailbox: string
+  imapLookbackDays: number
+  smtpHost: string
+  smtpPort: number
+  hasImap: boolean
 }
 
 export type AgentToolEvent = {
@@ -146,9 +157,7 @@ export type JobContext = {
 export type SecretSettings = {
   provider: ProviderId
   model: string
-  nvidiaKey: string
-  groqKey: string
-  cursorKey: string
+  ollamaBaseUrl: string
   openaiKey: string
   anthropicKey: string
   geminiKey: string
@@ -176,9 +185,7 @@ const api = {
   setSettings: (patch: {
     provider?: PublicSettings['provider']
     model?: string
-    nvidiaKey?: string
-    groqKey?: string
-    cursorKey?: string
+    ollamaBaseUrl?: string
     openaiKey?: string
     anthropicKey?: string
     geminiKey?: string
@@ -194,6 +201,14 @@ const api = {
     awsProfile?: string
     awsAccountId?: string
     agentMode?: boolean
+    imapHost?: string
+    imapPort?: number
+    imapUser?: string
+    imapPassword?: string
+    imapMailbox?: string
+    imapLookbackDays?: number
+    smtpHost?: string
+    smtpPort?: number
   }): Promise<boolean> => ipcRenderer.invoke('settings:set', patch),
   getSecrets: (): Promise<SecretSettings> => ipcRenderer.invoke('settings:getSecrets'),
   /** Managed AI account. Server-side truth; nothing here is cached locally. */
@@ -258,6 +273,7 @@ const api = {
     history?: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>
     workspace: string | null
     activeRelativePath: string | null
+    selectedText?: string | null
     provider?: ProviderId
     model?: string
     maxTurns?: number
@@ -289,6 +305,7 @@ const api = {
         history: payload.history || [],
         workspace: payload.workspace,
         activeRelativePath: payload.activeRelativePath,
+        selectedText: payload.selectedText || null,
         provider: payload.provider,
         model: payload.model,
         maxTurns: payload.maxTurns,
@@ -323,6 +340,7 @@ const api = {
       location: string
       jobUrl: string
       notes: string
+      source?: string
     }
   }): Promise<{ kitDir: string; pdfPath: string | null }> =>
     ipcRenderer.invoke('applyKit:write', payload),
@@ -358,6 +376,63 @@ const api = {
     >,
   ensureJobPreferences: (workspace: string): Promise<string> =>
     ipcRenderer.invoke('jobHunt:ensurePreferences', workspace),
+  fetchMailInbox: (workspace: string) =>
+    ipcRenderer.invoke('mail:fetchInbox', { workspace }) as Promise<
+      Array<{
+        id: string
+        uid?: number
+        from: string
+        fromEmail: string
+        replyTo: string
+        subject: string
+        date: string
+        company: string
+        role: string
+        location: string
+        jobUrl: string
+        recruiter: string
+        source: string
+        description: string
+        jobLikelihood: number
+        score: number
+        scoreReasons: string[]
+        alreadyTracked: boolean
+      }>
+    >,
+  sendMail: (payload: {
+    workspace: string
+    to: string
+    subject: string
+    body: string
+    attachPdf?: boolean
+    pdfPath?: string | null
+    notes?: string
+    company?: string
+    role?: string
+  }): Promise<{ to: string }> => ipcRenderer.invoke('mail:send', payload),
+  importMailFiles: (workspace: string) =>
+    ipcRenderer.invoke('mail:importFiles', { workspace }) as Promise<
+      Array<{
+        id: string
+        uid?: number
+        from: string
+        fromEmail: string
+        replyTo: string
+        subject: string
+        date: string
+        company: string
+        role: string
+        location: string
+        jobUrl: string
+        recruiter: string
+        source: string
+        description: string
+        jobLikelihood: number
+        score: number
+        scoreReasons: string[]
+        alreadyTracked: boolean
+      }>
+    >,
   setApplicationStatus: (payload: {
     workspace: string
     id: number
@@ -418,6 +493,8 @@ const api = {
   }): Promise<JobContext> => ipcRenderer.invoke('research:fetchJobContext', payload),
   clearEvidenceCache: (workspace: string): Promise<boolean> =>
     ipcRenderer.invoke('research:clearCache', workspace),
+  listOllamaModels: (baseUrl?: string): Promise<OllamaModelInfo[]> =>
+    ipcRenderer.invoke('ollama:listModels', baseUrl),
   recordAiAudit: (payload: {
     workspace: string
     action: string

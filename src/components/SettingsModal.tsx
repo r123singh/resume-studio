@@ -1,13 +1,12 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import {
   FREE_PROVIDERS,
-  isManagedProvider,
   MODEL_OPTIONS,
   PAID_PROVIDERS,
   supportsAgentMode,
   type ProviderId,
 } from '../lib/ai/providers'
-import { AccountPanel } from './AccountPanel'
+import { SMTP_PRESETS, smtpFromImapHost } from '../lib/mail'
 
 type Props = {
   onClose: () => void
@@ -16,8 +15,7 @@ type Props = {
 const PROVIDER_LABELS: Record<ProviderId, string> = {
   managed: 'Resume Studio AI (account)',
   nvidia: 'NVIDIA NIM (free)',
-  groq: 'Groq (free)',
-  cursor: 'Cursor SDK',
+  ollama: 'Ollama (local)',
   bedrock: 'Bedrock',
   openai: 'OpenAI',
   anthropic: 'Anthropic',
@@ -34,12 +32,19 @@ const AWS_REGIONS = [
   'ap-northeast-1',
 ]
 
+function formatOllamaSize(bytes?: number): string {
+  if (!bytes) return ''
+  const gb = bytes / 1024 ** 3
+  return gb >= 1 ? `${gb.toFixed(1)} GB` : `${(bytes / 1024 ** 2).toFixed(0)} MB`
+}
+
 export function SettingsPane({ onClose }: Props) {
   const [provider, setProvider] = useState<ProviderId>('nvidia')
   const [model, setModel] = useState(MODEL_OPTIONS.nvidia[0])
-  const [nvidiaKey, setNvidiaKey] = useState('')
-  const [groqKey, setGroqKey] = useState('')
-  const [cursorKey, setCursorKey] = useState('')
+  const [ollamaBaseUrl, setOllamaBaseUrl] = useState('http://127.0.0.1:11434/v1')
+  const [ollamaModels, setOllamaModels] = useState<Array<{ name: string; size?: number }>>([])
+  const [ollamaModelsLoading, setOllamaModelsLoading] = useState(false)
+  const [ollamaModelsError, setOllamaModelsError] = useState('')
   const [openaiKey, setOpenaiKey] = useState('')
   const [anthropicKey, setAnthropicKey] = useState('')
   const [geminiKey, setGeminiKey] = useState('')
@@ -48,9 +53,6 @@ export function SettingsPane({ onClose }: Props) {
   const [awsRegion, setAwsRegion] = useState('us-east-1')
   const [agentMode, setAgentMode] = useState(true)
   const [flags, setFlags] = useState({
-    nvidia: false,
-    groq: false,
-    cursor: false,
     openai: false,
     anthropic: false,
     gemini: false,
@@ -63,6 +65,16 @@ export function SettingsPane({ onClose }: Props) {
   const [redactPii, setRedactPii] = useState(false)
   const [confirmLargeEdits, setConfirmLargeEdits] = useState(true)
   const [allowWebResearch, setAllowWebResearch] = useState(false)
+  const [imapPreset, setImapPreset] = useState<'gmail' | 'outlook' | 'yahoo' | 'zoho' | 'icloud' | 'custom'>('gmail')
+  const [imapHost, setImapHost] = useState('imap.gmail.com')
+  const [imapPort, setImapPort] = useState('993')
+  const [imapUser, setImapUser] = useState('')
+  const [imapPassword, setImapPassword] = useState('')
+  const [imapMailbox, setImapMailbox] = useState('INBOX')
+  const [imapLookbackDays, setImapLookbackDays] = useState('14')
+  const [smtpHost, setSmtpHost] = useState('smtp.gmail.com')
+  const [smtpPort, setSmtpPort] = useState('587')
+  const [hasImap, setHasImap] = useState(false)
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState('')
 
@@ -72,9 +84,6 @@ export function SettingsPane({ onClose }: Props) {
       setProvider(s.provider)
       setModel(s.model)
       setFlags({
-        nvidia: s.hasNvidia,
-        groq: s.hasGroq,
-        cursor: s.hasCursor,
         openai: s.hasOpenAI,
         anthropic: s.hasAnthropic,
         gemini: s.hasGemini,
@@ -88,6 +97,23 @@ export function SettingsPane({ onClose }: Props) {
       setRedactPii(Boolean(s.redactPii))
       setConfirmLargeEdits(s.confirmLargeEdits !== false)
       setAllowWebResearch(Boolean(s.allowWebResearch))
+      setOllamaBaseUrl(s.ollamaBaseUrl || 'http://127.0.0.1:11434/v1')
+      setImapHost(s.imapHost || 'imap.gmail.com')
+      setImapPort(String(s.imapPort || 993))
+      setImapUser(s.imapUser || '')
+      setImapMailbox(s.imapMailbox || 'INBOX')
+      setImapLookbackDays(String(s.imapLookbackDays || 14))
+      const derivedSmtp = smtpFromImapHost(s.imapHost || 'imap.gmail.com')
+      setSmtpHost(s.smtpHost || derivedSmtp.host)
+      setSmtpPort(String(s.smtpPort || derivedSmtp.port))
+      setHasImap(Boolean(s.hasImap))
+      const host = (s.imapHost || 'imap.gmail.com').toLowerCase()
+      if (host.includes('gmail')) setImapPreset('gmail')
+      else if (host.includes('office365') || host.includes('outlook')) setImapPreset('outlook')
+      else if (host.includes('yahoo')) setImapPreset('yahoo')
+      else if (host.includes('zoho')) setImapPreset('zoho')
+      else if (host.includes('mail.me.com')) setImapPreset('icloud')
+      else setImapPreset(s.imapHost ? 'custom' : 'gmail')
       if (PAID_PROVIDERS.includes(s.provider)) setShowPaid(true)
     })()
   }, [])
@@ -111,8 +137,36 @@ export function SettingsPane({ onClose }: Props) {
       if (fromOtherProvider || !model.trim()) setModel(models[0])
       return
     }
+    if (provider === 'ollama') return
     if (!models.includes(model)) setModel(models[0])
   }, [provider, model])
+
+  const refreshOllamaModels = useCallback(async () => {
+    setOllamaModelsLoading(true)
+    setOllamaModelsError('')
+    try {
+      const models = await window.resumeStudio.listOllamaModels(ollamaBaseUrl)
+      setOllamaModels(models)
+      if (models.length === 0) {
+        setOllamaModelsError('No models found. Run `ollama pull <model>` first.')
+        return
+      }
+      setModel((current) => (models.some((m) => m.name === current) ? current : models[0].name))
+    } catch (err) {
+      setOllamaModels([])
+      setOllamaModelsError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setOllamaModelsLoading(false)
+    }
+  }, [ollamaBaseUrl])
+
+  useEffect(() => {
+    if (provider !== 'ollama') return
+    const timer = window.setTimeout(() => {
+      void refreshOllamaModels()
+    }, 300)
+    return () => window.clearTimeout(timer)
+  }, [provider, ollamaBaseUrl, refreshOllamaModels])
 
   const save = async () => {
     setSaving(true)
@@ -121,9 +175,7 @@ export function SettingsPane({ onClose }: Props) {
       await window.resumeStudio.setSettings({
         provider,
         model,
-        nvidiaKey: nvidiaKey.trim() || undefined,
-        groqKey: groqKey.trim() || undefined,
-        cursorKey: cursorKey.trim() || undefined,
+        ollamaBaseUrl: ollamaBaseUrl.trim() || undefined,
         openaiKey: openaiKey.trim() || undefined,
         anthropicKey: anthropicKey.trim() || undefined,
         geminiKey: geminiKey.trim() || undefined,
@@ -135,12 +187,17 @@ export function SettingsPane({ onClose }: Props) {
         redactPii,
         confirmLargeEdits,
         allowWebResearch,
+        imapHost,
+        imapPort: Number(imapPort) || 993,
+        imapUser,
+        imapPassword: imapPassword.trim() || undefined,
+        imapMailbox,
+        imapLookbackDays: Number(imapLookbackDays) || 14,
+        smtpHost,
+        smtpPort: Number(smtpPort) || 587,
       })
       const s = await window.resumeStudio.getSettings()
       setFlags({
-        nvidia: s.hasNvidia,
-        groq: s.hasGroq,
-        cursor: s.hasCursor,
         openai: s.hasOpenAI,
         anthropic: s.hasAnthropic,
         gemini: s.hasGemini,
@@ -148,14 +205,13 @@ export function SettingsPane({ onClose }: Props) {
         bedrockAccessKeyId: s.hasBedrockAccessKeyId,
         bedrockSecretAccessKey: s.hasBedrockSecretAccessKey,
       })
-      setNvidiaKey('')
-      setGroqKey('')
-      setCursorKey('')
       setOpenaiKey('')
       setAnthropicKey('')
       setGeminiKey('')
       setBedrockAccessKeyId('')
       setBedrockSecretAccessKey('')
+      setImapPassword('')
+      setHasImap(s.hasImap)
       setMessage('Saved. Keys are stored encrypted on this machine.')
     } catch (err) {
       setMessage(err instanceof Error ? err.message : String(err))
@@ -175,8 +231,8 @@ export function SettingsPane({ onClose }: Props) {
       <div className="settings-pane-body">
         <div className="settings-pane-inner">
         <p className="muted">
-          Default: free NVIDIA NIM, Groq, or Cursor SDK. Paid providers are optional. Keys stay on
-          this machine except when calling the selected provider.
+          Default: NVIDIA NIM (included) or Ollama (local). Paid providers are optional.
+          Paid keys stay on this machine except when calling that provider.
         </p>
 
         <label className="field">
@@ -185,7 +241,7 @@ export function SettingsPane({ onClose }: Props) {
             value={provider}
             onChange={(e) => setProvider(e.target.value as ProviderId)}
           >
-            <optgroup label="Free / account">
+            <optgroup label="Free">
               {FREE_PROVIDERS.map((id) => (
                 <option key={id} value={id}>
                   {PROVIDER_LABELS[id]}
@@ -202,10 +258,63 @@ export function SettingsPane({ onClose }: Props) {
           </select>
         </label>
 
-        {isManagedProvider(provider) ? (
-          <fieldset className="privacy-fieldset">
-            <legend>Account</legend>
-            <AccountPanel />
+        {provider === 'ollama' ? (
+          <fieldset className="bedrock-settings">
+            <div className="bedrock-settings-head">
+              <h3>Ollama</h3>
+              <p>
+                Run models locally with{' '}
+                <a href="https://ollama.com" target="_blank" rel="noreferrer">
+                  Ollama
+                </a>
+                . No API key — traffic stays on this machine. Models are loaded from your running
+                Ollama instance.
+              </p>
+            </div>
+            <div className="bedrock-kv">
+              <label className="bedrock-kv-row">
+                <span>Base URL</span>
+                <input
+                  type="text"
+                  spellCheck={false}
+                  placeholder="http://127.0.0.1:11434/v1"
+                  value={ollamaBaseUrl}
+                  onChange={(e) => setOllamaBaseUrl(e.target.value)}
+                />
+              </label>
+              <label className="bedrock-kv-row">
+                <span>Model</span>
+                <div className="ollama-model-row">
+                  <select
+                    value={model}
+                    disabled={ollamaModelsLoading || ollamaModels.length === 0}
+                    onChange={(e) => setModel(e.target.value)}
+                  >
+                    {ollamaModels.length === 0 ? (
+                      <option value={model || ''}>
+                        {ollamaModelsLoading ? 'Loading models…' : model || 'No models'}
+                      </option>
+                    ) : (
+                      ollamaModels.map((m) => (
+                        <option key={m.name} value={m.name}>
+                          {m.name}
+                          {m.size ? ` (${formatOllamaSize(m.size)})` : ''}
+                        </option>
+                      ))
+                    )}
+                  </select>
+                  <button
+                    type="button"
+                    className="btn ghost"
+                    disabled={ollamaModelsLoading}
+                    onClick={() => void refreshOllamaModels()}
+                  >
+                    {ollamaModelsLoading ? 'Refreshing…' : 'Refresh'}
+                  </button>
+                </div>
+              </label>
+            </div>
+            {ollamaModelsError ? <p className="settings-msg">{ollamaModelsError}</p> : null}
           </fieldset>
         ) : provider !== 'bedrock' ? (
           <label className="field">
@@ -315,7 +424,7 @@ export function SettingsPane({ onClose }: Props) {
           ) : (
             <p className="muted small">
               {PROVIDER_LABELS[provider]} returns finished text with no tool calls, so agent mode is
-              unavailable. Pick Groq, NVIDIA, Bedrock, OpenAI, Anthropic, or Gemini to enable it.
+              unavailable. Pick NVIDIA, Ollama, Bedrock, OpenAI, Anthropic, or Gemini to enable it.
             </p>
           )}
         </fieldset>
@@ -328,7 +437,9 @@ export function SettingsPane({ onClose }: Props) {
               checked={allowExternalAi}
               onChange={(e) => setAllowExternalAi(e.target.checked)}
             />
-            <span>Allow external AI (NVIDIA / Groq / Cursor / paid providers)</span>
+            <span>
+              Allow external AI (NVIDIA and paid providers). Ollama (local) works even when this is off.
+            </span>
           </label>
           <label className="check-row">
             <input
@@ -359,52 +470,132 @@ export function SettingsPane({ onClose }: Props) {
           </label>
         </fieldset>
 
-        {provider === 'nvidia' || flags.nvidia ? (
+        <fieldset className="privacy-fieldset">
+          <legend>Mail (IMAP + SMTP)</legend>
+          <p className="muted small">
+            Fetch inbox over IMAP and send replies over SMTP with the same app password — not your
+            main login. The password is encrypted with OS safeStorage and never sent to an LLM.
+            Resume Studio never auto-sends; you click Send reply.
+          </p>
           <label className="field">
-            <span>
-              NVIDIA API key {flags.nvidia ? '(saved)' : ''} — from{' '}
-              <a href="https://build.nvidia.com" target="_blank" rel="noreferrer">
-                build.nvidia.com
-              </a>
-            </span>
+            <span>Provider</span>
+            <select
+              value={imapPreset}
+              onChange={(e) => {
+                const next = e.target.value as typeof imapPreset
+                setImapPreset(next)
+                if (next !== 'custom') {
+                  const smtp = SMTP_PRESETS[next]
+                  if (next === 'gmail') {
+                    setImapHost('imap.gmail.com')
+                    setImapPort('993')
+                  } else if (next === 'outlook') {
+                    setImapHost('outlook.office365.com')
+                    setImapPort('993')
+                  } else if (next === 'yahoo') {
+                    setImapHost('imap.mail.yahoo.com')
+                    setImapPort('993')
+                  } else if (next === 'zoho') {
+                    setImapHost('imap.zoho.com')
+                    setImapPort('993')
+                  } else if (next === 'icloud') {
+                    setImapHost('imap.mail.me.com')
+                    setImapPort('993')
+                  }
+                  setSmtpHost(smtp.host)
+                  setSmtpPort(String(smtp.port))
+                }
+              }}
+            >
+              <option value="gmail">Gmail</option>
+              <option value="outlook">Outlook / Microsoft 365</option>
+              <option value="yahoo">Yahoo</option>
+              <option value="zoho">Zoho</option>
+              <option value="icloud">iCloud</option>
+              <option value="custom">Custom IMAP</option>
+            </select>
+          </label>
+          <label className="field">
+            <span>IMAP host</span>
             <input
-              type="password"
-              placeholder={flags.nvidia ? '•••••••• (leave blank to keep)' : 'nvapi-...'}
-              value={nvidiaKey}
-              onChange={(e) => setNvidiaKey(e.target.value)}
+              value={imapHost}
+              onChange={(e) => {
+                setImapHost(e.target.value)
+                setImapPreset('custom')
+              }}
+              placeholder="imap.gmail.com"
+              spellCheck={false}
             />
           </label>
-        ) : null}
-
-        {provider === 'groq' || flags.groq ? (
           <label className="field">
-            <span>
-              Groq API key {flags.groq ? '(saved)' : ''} — from{' '}
-              <a href="https://console.groq.com/keys" target="_blank" rel="noreferrer">
-                console.groq.com
-              </a>
-              {' '}(no credit card)
-            </span>
+            <span>Port</span>
             <input
-              type="password"
-              placeholder={flags.groq ? '•••••••• (leave blank to keep)' : 'gsk_...'}
-              value={groqKey}
-              onChange={(e) => setGroqKey(e.target.value)}
+              value={imapPort}
+              onChange={(e) => setImapPort(e.target.value)}
+              placeholder="993"
+              inputMode="numeric"
             />
           </label>
-        ) : null}
-
-        {provider === 'cursor' || flags.cursor ? (
           <label className="field">
-            <span>Cursor API key {flags.cursor ? '(saved)' : ''} — CURSOR_API_KEY / service account</span>
+            <span>Email address</span>
             <input
-              type="password"
-              placeholder={flags.cursor ? '•••••••• (leave blank to keep)' : 'cursor_...'}
-              value={cursorKey}
-              onChange={(e) => setCursorKey(e.target.value)}
+              value={imapUser}
+              onChange={(e) => setImapUser(e.target.value)}
+              placeholder="you@gmail.com"
+              spellCheck={false}
+              autoComplete="username"
             />
           </label>
-        ) : null}
+          <label className="field">
+            <span>App password {hasImap ? '(saved)' : ''}</span>
+            <input
+              type="password"
+              value={imapPassword}
+              onChange={(e) => setImapPassword(e.target.value)}
+              placeholder={hasImap ? '•••••••• (leave blank to keep)' : '16-character app password'}
+              autoComplete="new-password"
+            />
+          </label>
+          <label className="field">
+            <span>Mailbox</span>
+            <input
+              value={imapMailbox}
+              onChange={(e) => setImapMailbox(e.target.value)}
+              placeholder="INBOX"
+              spellCheck={false}
+            />
+          </label>
+          <label className="field">
+            <span>Lookback days</span>
+            <input
+              value={imapLookbackDays}
+              onChange={(e) => setImapLookbackDays(e.target.value)}
+              placeholder="14"
+              inputMode="numeric"
+            />
+          </label>
+          <label className="field">
+            <span>SMTP host</span>
+            <input
+              value={smtpHost}
+              onChange={(e) => {
+                setSmtpHost(e.target.value)
+                setImapPreset('custom')
+              }}
+              placeholder="smtp.gmail.com"
+              spellCheck={false}
+            />
+          </label>
+          <label className="field">
+            <span>SMTP port (587 STARTTLS, 465 SSL)</span>
+            <input
+              value={smtpPort}
+              onChange={(e) => setSmtpPort(e.target.value)}
+              placeholder="587"
+              inputMode="numeric"
+            />
+          </label>
+        </fieldset>
 
         <button
           type="button"

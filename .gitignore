@@ -21,6 +21,9 @@ node_modules
 # Product AWS deploy output (account id, stack outputs)
 aws/local.json
 
+# Product NVIDIA NIM key. Inlined into the desktop build; not a user setting.
+electron/nvidia/product.ts
+
 # AI control plane build output. `dist` above only matches the repo root.
 backend/dist/
 backend/dist-bundle/

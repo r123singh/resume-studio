@@ -12,5 +12,5 @@
     "strict": true,
     "types": ["node"]
   },
-  "include": ["electron"]
+  "include": ["electron", "src/lib/mail.ts"]
 }

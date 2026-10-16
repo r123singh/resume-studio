@@ -121,7 +121,7 @@ const meta = {
   sha256: sha,
   platform: 'win32',
   arch: 'x64',
-  offer: 'Free · Bring your own API key',
+  offer: 'Free · NVIDIA included',
   format: 'zip-stored-as-rsz',
   note: 'Standard ZIP bytes with .rsz extension (Windows AV often blocks writing Electron .zip). Rename to .zip to extract.',
   createdAt: new Date().toISOString(),

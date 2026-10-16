@@ -215,12 +215,18 @@ async function fetchRemotive(query: string): Promise<Omit<JobListing, 'score' | 
   return out
 }
 
-function scoreListing(
-  job: Omit<JobListing, 'score' | 'scoreReasons' | 'alreadyTracked'>,
+export function scoreListing(
+  job: {
+    title: string
+    company: string
+    location: string
+    tags?: string[]
+    description: string
+  },
   prefs: JobHuntPreferences,
   query: string,
 ): { score: number; reasons: string[] } {
-  const hay = `${job.title} ${job.company} ${job.location} ${job.tags.join(' ')} ${job.description.slice(0, 2000)}`.toLowerCase()
+  const hay = `${job.title} ${job.company} ${job.location} ${(job.tags || []).join(' ')} ${job.description.slice(0, 2000)}`.toLowerCase()
   const reasons: string[] = []
   let score = 40
 

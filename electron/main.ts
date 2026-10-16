@@ -19,11 +19,15 @@ import {
   type ApplicationStatus,
 } from './applications'
 import { ensureJobPreferences, searchJobs } from './job-hunt'
+import { fetchImapInbox, rankMailMessages, readEmlFiles } from './mail-inbox'
+import { findKitPdf, resolveSmtpSettings, sendMail } from './mail-send'
 import { searchWorkspace } from './workspace-search'
 import { gitCommit, gitDiff, gitInit, gitStatus } from './git'
 import { clearEvidenceCache, fetchJobContext } from './job-research'
 import { runAgent, runCompletion } from './agent/runner'
+import { listOllamaModels } from './ollama'
 import { PRODUCT_AWS } from './aws/product'
+import { PRODUCT_NVIDIA_API_KEY } from './nvidia/product'
 import * as platform from './platform/client'
 
 /** In-flight agent runs, so the UI can cancel them. */
@@ -34,9 +38,8 @@ let mainWindow: BrowserWindow | null = null
 type AppSettings = {
   provider: ProviderId
   model: string
-  nvidiaKeyEnc?: string
-  groqKeyEnc?: string
-  cursorKeyEnc?: string
+  /** Ollama OpenAI-compatible endpoint, e.g. http://127.0.0.1:11434/v1 */
+  ollamaBaseUrl?: string
   openaiKeyEnc?: string
   anthropicKeyEnc?: string
   geminiKeyEnc?: string
@@ -60,14 +63,25 @@ type AppSettings = {
   awsAccountId?: string
   /** Let the model plan with tools instead of a single-shot prompt. */
   agentMode?: boolean
+  /** IMAP inbox for Mail desk. Password is encrypted; host/user are plaintext. */
+  imapHost?: string
+  imapPort?: number
+  imapUser?: string
+  imapPassEnc?: string
+  imapMailbox?: string
+  imapLookbackDays?: number
+  smtpHost?: string
+  smtpPort?: number
 }
 
 function settingsPath() {
   return path.join(app.getPath('userData'), 'settings.json')
 }
 
-const DEFAULT_NVIDIA_MODEL = 'nvidia/nemotron-3-nano-30b-a3b'
+const DEFAULT_NVIDIA_MODEL = 'openai/gpt-oss-20b'
 const DEFAULT_GEMINI_MODEL = 'gemini-3.8-flash'
+const DEFAULT_OLLAMA_MODEL = 'llama3.2:latest'
+const DEFAULT_OLLAMA_BASE_URL = 'http://127.0.0.1:11434/v1'
 
 /**
  * NVIDIA NIM model IDs that were retired from build.nvidia.com and now 404.
@@ -90,9 +104,30 @@ const RETIRED_GEMINI_MODELS = new Set([
   'gemini-1.5-pro',
 ])
 
+/** Providers no longer offered in Settings. Saved values fall back to NVIDIA NIM. */
+const RETIRED_PROVIDERS = new Set(['cursor', 'groq', 'managed'])
+
+function normalizeProvider(provider: string | undefined): ProviderId {
+  if (!provider || RETIRED_PROVIDERS.has(provider)) return 'nvidia'
+  return provider as ProviderId
+}
+
+/** NIM models that are not offered. Some of these require an API key. */
+function isDisabledNvidiaModel(model: string): boolean {
+  return (
+    model.includes('nemotron-3-nano-') ||
+    model.includes('mistral/mistral-') ||
+    model.startsWith('mistralai/mistral-') ||
+    model.startsWith('deepseek-ai/')
+  )
+}
+
 function migrateModel(provider: string | undefined, model: string | undefined): string {
   const resolved = model || DEFAULT_NVIDIA_MODEL
-  if ((provider || 'nvidia') === 'nvidia' && RETIRED_NVIDIA_MODELS.has(resolved)) {
+  if (
+    (provider || 'nvidia') === 'nvidia' &&
+    (RETIRED_NVIDIA_MODELS.has(resolved) || isDisabledNvidiaModel(resolved))
+  ) {
     return DEFAULT_NVIDIA_MODEL
   }
   if (provider === 'gemini' && RETIRED_GEMINI_MODELS.has(resolved)) {
@@ -104,13 +139,15 @@ function migrateModel(provider: string | undefined, model: string | undefined): 
 async function readSettings(): Promise<AppSettings> {
   try {
     const raw = await fs.readFile(settingsPath(), 'utf8')
-    const parsed = JSON.parse(raw) as Partial<AppSettings>
+    const parsed = JSON.parse(raw) as Partial<AppSettings> & { provider?: string }
+    const savedProvider = parsed.provider as string | undefined
+    const provider = normalizeProvider(savedProvider)
     return {
-      provider: parsed.provider || 'nvidia',
-      model: migrateModel(parsed.provider, parsed.model),
-      nvidiaKeyEnc: parsed.nvidiaKeyEnc,
-      groqKeyEnc: parsed.groqKeyEnc,
-      cursorKeyEnc: parsed.cursorKeyEnc,
+      provider,
+      model: RETIRED_PROVIDERS.has(savedProvider || '')
+        ? DEFAULT_NVIDIA_MODEL
+        : migrateModel(provider, parsed.model),
+      ollamaBaseUrl: parsed.ollamaBaseUrl || DEFAULT_OLLAMA_BASE_URL,
       openaiKeyEnc: parsed.openaiKeyEnc,
       anthropicKeyEnc: parsed.anthropicKeyEnc,
       geminiKeyEnc: parsed.geminiKeyEnc,
@@ -126,11 +163,20 @@ async function readSettings(): Promise<AppSettings> {
       awsProfile: parsed.awsProfile || PRODUCT_AWS.profile,
       awsAccountId: parsed.awsAccountId || '',
       agentMode: parsed.agentMode !== false,
+      imapHost: parsed.imapHost || '',
+      imapPort: parsed.imapPort || 993,
+      imapUser: parsed.imapUser || '',
+      imapPassEnc: parsed.imapPassEnc,
+      imapMailbox: parsed.imapMailbox || 'INBOX',
+      imapLookbackDays: parsed.imapLookbackDays || 14,
+      smtpHost: parsed.smtpHost || '',
+      smtpPort: parsed.smtpPort || 587,
     }
   } catch {
     return {
       provider: 'nvidia',
       model: DEFAULT_NVIDIA_MODEL,
+      ollamaBaseUrl: DEFAULT_OLLAMA_BASE_URL,
       allowExternalAi: true,
       redactPii: false,
       confirmLargeEdits: true,
@@ -139,6 +185,13 @@ async function readSettings(): Promise<AppSettings> {
       awsProfile: PRODUCT_AWS.profile,
       awsAccountId: '',
       agentMode: true,
+      imapHost: '',
+      imapPort: 993,
+      imapUser: '',
+      imapMailbox: 'INBOX',
+      imapLookbackDays: 14,
+      smtpHost: '',
+      smtpPort: 587,
     }
   }
 }
@@ -393,9 +446,7 @@ ipcMain.handle('settings:get', async () => {
     provider: s.provider,
     model: s.model,
     lastWorkspace: s.lastWorkspace ?? null,
-    hasNvidia: Boolean(decryptSecret(s.nvidiaKeyEnc)),
-    hasGroq: Boolean(decryptSecret(s.groqKeyEnc)),
-    hasCursor: Boolean(decryptSecret(s.cursorKeyEnc)),
+    ollamaBaseUrl: s.ollamaBaseUrl || DEFAULT_OLLAMA_BASE_URL,
     hasOpenAI: Boolean(decryptSecret(s.openaiKeyEnc)),
     hasAnthropic: Boolean(decryptSecret(s.anthropicKeyEnc)),
     hasGemini: Boolean(decryptSecret(s.geminiKeyEnc)),
@@ -410,6 +461,14 @@ ipcMain.handle('settings:get', async () => {
     redactPii: Boolean(s.redactPii),
     confirmLargeEdits: s.confirmLargeEdits !== false,
     allowWebResearch: Boolean(s.allowWebResearch),
+    imapHost: s.imapHost || '',
+    imapPort: s.imapPort || 993,
+    imapUser: s.imapUser || '',
+    imapMailbox: s.imapMailbox || 'INBOX',
+    imapLookbackDays: s.imapLookbackDays || 14,
+    smtpHost: s.smtpHost || '',
+    smtpPort: s.smtpPort || 587,
+    hasImap: Boolean(decryptSecret(s.imapPassEnc)),
   }
 })
 
@@ -420,9 +479,7 @@ ipcMain.handle(
     patch: {
       provider?: AppSettings['provider']
       model?: string
-      nvidiaKey?: string
-      groqKey?: string
-      cursorKey?: string
+      ollamaBaseUrl?: string
       openaiKey?: string
       anthropicKey?: string
       geminiKey?: string
@@ -438,10 +495,18 @@ ipcMain.handle(
       awsProfile?: string
       awsAccountId?: string
       agentMode?: boolean
+      imapHost?: string
+      imapPort?: number
+      imapUser?: string
+      imapPassword?: string
+      imapMailbox?: string
+      imapLookbackDays?: number
+      smtpHost?: string
+      smtpPort?: number
     },
   ) => {
     const s = await readSettings()
-    if (patch.provider) s.provider = patch.provider
+    if (patch.provider) s.provider = normalizeProvider(patch.provider)
     if (typeof patch.awsRegion === 'string') s.awsRegion = patch.awsRegion.trim() || PRODUCT_AWS.region
     if (typeof patch.awsProfile === 'string') {
       const next = patch.awsProfile.trim() || PRODUCT_AWS.profile
@@ -471,14 +536,8 @@ ipcMain.handle(
     if (typeof patch.redactPii === 'boolean') s.redactPii = patch.redactPii
     if (typeof patch.confirmLargeEdits === 'boolean') s.confirmLargeEdits = patch.confirmLargeEdits
     if (typeof patch.allowWebResearch === 'boolean') s.allowWebResearch = patch.allowWebResearch
-    if (typeof patch.nvidiaKey === 'string' && patch.nvidiaKey.trim()) {
-      s.nvidiaKeyEnc = encryptSecret(patch.nvidiaKey.trim())
-    }
-    if (typeof patch.groqKey === 'string' && patch.groqKey.trim()) {
-      s.groqKeyEnc = encryptSecret(patch.groqKey.trim())
-    }
-    if (typeof patch.cursorKey === 'string' && patch.cursorKey.trim()) {
-      s.cursorKeyEnc = encryptSecret(patch.cursorKey.trim())
+    if (typeof patch.ollamaBaseUrl === 'string') {
+      s.ollamaBaseUrl = patch.ollamaBaseUrl.trim() || DEFAULT_OLLAMA_BASE_URL
     }
     if (typeof patch.openaiKey === 'string' && patch.openaiKey.trim()) {
       s.openaiKeyEnc = encryptSecret(patch.openaiKey.trim())
@@ -488,6 +547,24 @@ ipcMain.handle(
     }
     if (typeof patch.geminiKey === 'string' && patch.geminiKey.trim()) {
       s.geminiKeyEnc = encryptSecret(patch.geminiKey.trim())
+    }
+    if (typeof patch.imapHost === 'string') s.imapHost = patch.imapHost.trim()
+    if (typeof patch.imapPort === 'number' && Number.isFinite(patch.imapPort)) {
+      s.imapPort = Math.min(65535, Math.max(1, Math.round(patch.imapPort)))
+    }
+    if (typeof patch.imapUser === 'string') s.imapUser = patch.imapUser.trim()
+    if (typeof patch.imapPassword === 'string' && patch.imapPassword.trim()) {
+      s.imapPassEnc = encryptSecret(patch.imapPassword.trim())
+    }
+    if (typeof patch.imapMailbox === 'string') {
+      s.imapMailbox = patch.imapMailbox.trim() || 'INBOX'
+    }
+    if (typeof patch.imapLookbackDays === 'number' && Number.isFinite(patch.imapLookbackDays)) {
+      s.imapLookbackDays = Math.min(90, Math.max(1, Math.round(patch.imapLookbackDays)))
+    }
+    if (typeof patch.smtpHost === 'string') s.smtpHost = patch.smtpHost.trim()
+    if (typeof patch.smtpPort === 'number' && Number.isFinite(patch.smtpPort)) {
+      s.smtpPort = Math.min(65535, Math.max(1, Math.round(patch.smtpPort)))
     }
     await writeSettings(s)
     return true
@@ -499,9 +576,7 @@ ipcMain.handle('settings:getSecrets', async () => {
   return {
     provider: s.provider,
     model: s.model,
-    nvidiaKey: decryptSecret(s.nvidiaKeyEnc),
-    groqKey: decryptSecret(s.groqKeyEnc),
-    cursorKey: decryptSecret(s.cursorKeyEnc),
+    ollamaBaseUrl: s.ollamaBaseUrl || DEFAULT_OLLAMA_BASE_URL,
     openaiKey: decryptSecret(s.openaiKeyEnc),
     anthropicKey: decryptSecret(s.anthropicKeyEnc),
     geminiKey: decryptSecret(s.geminiKeyEnc),
@@ -567,10 +642,14 @@ ipcMain.handle('platform:account', async () => platformCall(() => platform.getAc
 
 ipcMain.handle('platform:usage', async () => platformCall(() => platform.getUsage()))
 
+ipcMain.handle('ollama:listModels', async (_e, baseUrl?: string) => {
+  const s = await readSettings()
+  return listOllamaModels(baseUrl?.trim() || s.ollamaBaseUrl || DEFAULT_OLLAMA_BASE_URL)
+})
+
 function keyForProvider(s: AppSettings, p: ProviderId): string {
-  if (p === 'nvidia') return decryptSecret(s.nvidiaKeyEnc)
-  if (p === 'groq') return decryptSecret(s.groqKeyEnc)
-  if (p === 'cursor') return decryptSecret(s.cursorKeyEnc)
+  if (p === 'nvidia') return PRODUCT_NVIDIA_API_KEY.trim()
+  if (p === 'ollama') return 'ollama'
   if (p === 'openai') return decryptSecret(s.openaiKeyEnc)
   if (p === 'anthropic') return decryptSecret(s.anthropicKeyEnc)
   if (p === 'bedrock') return decryptSecret(s.bedrockKeyEnc)
@@ -585,17 +664,28 @@ function hasBedrockCredentials(s: AppSettings): boolean {
   return Boolean(access && secret) || Boolean(decryptSecret(s.bedrockKeyEnc))
 }
 
+function isLocalAiProvider(provider: ProviderId): boolean {
+  return provider === 'ollama'
+}
+
 /**
  * Providers that hold their own credential locally.
  *
  * `managed` uses the signed-in account, so it is not blocked on a missing key.
+ * NVIDIA NIM uses the product key. Settings does not ask for one.
  */
 function needsLocalApiKey(provider: ProviderId): boolean {
-  return provider !== 'managed'
+  return provider !== 'managed' && provider !== 'ollama' && provider !== 'nvidia'
 }
 
 function assertProviderCredentials(s: AppSettings, provider: ProviderId): void {
-  if (provider === 'managed') return
+  if (provider === 'nvidia') {
+    if (!PRODUCT_NVIDIA_API_KEY.trim()) {
+      throw new Error('NVIDIA NIM is not configured in this build.')
+    }
+    return
+  }
+  if (provider === 'managed' || provider === 'ollama') return
   if (provider === 'bedrock') {
     if (hasBedrockCredentials(s)) return
     throw new Error(
@@ -611,7 +701,6 @@ function modelSpecFromSettings(
   s: AppSettings,
   provider: ProviderId,
   model: string,
-  workspace?: string | null,
   capability?: AiCapability,
 ) {
   return {
@@ -623,7 +712,7 @@ function modelSpecFromSettings(
     secretAccessKey: decryptSecret(s.bedrockSecretAccessKeyEnc),
     profile: s.awsProfile || PRODUCT_AWS.profile,
     expectedAccountId: s.awsAccountId,
-    workspace: workspace ?? null,
+    baseURL: provider === 'ollama' ? s.ollamaBaseUrl || DEFAULT_OLLAMA_BASE_URL : undefined,
     ...(capability ? { capability } : {}),
   }
 }
@@ -668,16 +757,17 @@ ipcMain.handle(
     },
   ) => {
     const s = await readSettings()
-    if (s.allowExternalAi === false) {
+    const requested = String(payload.provider || s.provider || 'nvidia')
+    const provider = normalizeProvider(requested)
+    if (s.allowExternalAi === false && !isLocalAiProvider(provider)) {
       throw new Error(
-        'External AI is disabled in Settings (privacy). Enable “Allow external AI” to continue.',
+        'External AI is disabled in Settings (privacy). Enable “Allow external AI” or switch to Ollama (local).',
       )
     }
-    const provider = (payload.provider || s.provider) as ProviderId
-    const model = payload.model || s.model
+    const model = provider === requested ? payload.model || s.model : DEFAULT_NVIDIA_MODEL
     const messages = prepareMessages(payload.messages, Boolean(s.redactPii))
 
-    const spec = modelSpecFromSettings(s, provider, model, payload.workspace, payload.capability)
+    const spec = modelSpecFromSettings(s, provider, model, payload.capability)
     assertProviderCredentials(s, provider)
 
     const result = await runCompletion({
@@ -702,17 +792,18 @@ ipcMain.handle(
     },
   ) => {
     const s = await readSettings()
-    if (s.allowExternalAi === false) {
+    const requested = String(payload.provider || s.provider || 'nvidia')
+    const provider = normalizeProvider(requested)
+    if (s.allowExternalAi === false && !isLocalAiProvider(provider)) {
       throw new Error(
-        'External AI is disabled in Settings (privacy). Enable “Allow external AI” to continue.',
+        'External AI is disabled in Settings (privacy). Enable “Allow external AI” or switch to Ollama (local).',
       )
     }
-    const provider = (payload.provider || s.provider) as ProviderId
-    const model = payload.model || s.model
+    const model = provider === requested ? payload.model || s.model : DEFAULT_NVIDIA_MODEL
     const messages = prepareMessages(payload.messages, Boolean(s.redactPii))
     const inputTokens = messages.reduce((n, m) => n + estimateTokens(m.content), 0)
 
-    const spec = modelSpecFromSettings(s, provider, model, payload.workspace, payload.capability)
+    const spec = modelSpecFromSettings(s, provider, model, payload.capability)
     assertProviderCredentials(s, provider)
 
     const sendChunk = (text: string) => {
@@ -747,21 +838,23 @@ ipcMain.handle(
       history?: ChatMessage[]
       workspace: string | null
       activeRelativePath: string | null
+      selectedText?: string | null
       provider?: ProviderId
       model?: string
       maxTurns?: number
     },
   ) => {
     const s = await readSettings()
-    if (s.allowExternalAi === false) {
+    const requested = String(payload.provider || s.provider || 'nvidia')
+    const provider = normalizeProvider(requested)
+    if (s.allowExternalAi === false && !isLocalAiProvider(provider)) {
       throw new Error(
-        'External AI is disabled in Settings (privacy). Enable “Allow external AI” to continue.',
+        'External AI is disabled in Settings (privacy). Enable “Allow external AI” or switch to Ollama (local).',
       )
     }
 
-    const provider = (payload.provider || s.provider) as ProviderId
-    const model = payload.model || s.model
-    const spec = modelSpecFromSettings(s, provider, model, payload.workspace, 'agent')
+    const model = provider === requested ? payload.model || s.model : DEFAULT_NVIDIA_MODEL
+    const spec = modelSpecFromSettings(s, provider, model, 'agent')
     assertProviderCredentials(s, provider)
 
     const send = (data: Record<string, unknown>) => {
@@ -778,6 +871,10 @@ ipcMain.handle(
         history: prepareMessages(payload.history || [], Boolean(s.redactPii)),
         workspace: payload.workspace,
         activeRelativePath: payload.activeRelativePath,
+        selectedText: payload.selectedText
+          ? prepareMessages([{ role: 'user', content: payload.selectedText }], Boolean(s.redactPii))[0]
+              ?.content
+          : null,
         allowWebResearch: Boolean(s.allowWebResearch),
         maxTurns: payload.maxTurns,
         signal: controller.signal,
@@ -912,6 +1009,7 @@ ipcMain.handle(
         location: string
         jobUrl: string
         notes: string
+        source?: string
       }
     },
   ) => {
@@ -970,7 +1068,7 @@ ipcMain.handle(
           payload.tracker.company,
           payload.tracker.role,
           payload.tracker.location,
-          'Resume Studio',
+          payload.tracker.source?.trim() || 'Resume Studio',
           payload.tracker.jobUrl,
           'ready-to-apply',
           payload.tracker.notes,
@@ -1000,6 +1098,94 @@ ipcMain.handle(
 ipcMain.handle('jobHunt:ensurePreferences', async (_e, workspace: string) => {
   return ensureJobPreferences(workspace)
 })
+
+ipcMain.handle(
+  'mail:fetchInbox',
+  async (_e, payload: { workspace: string }) => {
+    if (!payload.workspace) throw new Error('Open a workspace first')
+    const s = await readSettings()
+    const password = decryptSecret(s.imapPassEnc)
+    if (!s.imapHost || !s.imapUser || !password) {
+      throw new Error('Save IMAP host, email, and app password in Settings first.')
+    }
+    const messages = await fetchImapInbox({
+      host: s.imapHost,
+      port: s.imapPort || 993,
+      user: s.imapUser,
+      password,
+      mailbox: s.imapMailbox || 'INBOX',
+      lookbackDays: s.imapLookbackDays || 14,
+      maxMessages: 25,
+    })
+    return rankMailMessages(payload.workspace, messages)
+  },
+)
+
+ipcMain.handle(
+  'mail:importFiles',
+  async (_e, payload: { workspace: string }) => {
+    if (!payload.workspace) throw new Error('Open a workspace first')
+    const result = await dialog.showOpenDialog({
+      properties: ['openFile', 'multiSelections'],
+      filters: [
+        { name: 'Email', extensions: ['eml', 'txt', 'mbox'] },
+        { name: 'All files', extensions: ['*'] },
+      ],
+    })
+    if (result.canceled || !result.filePaths.length) return []
+    const files = await readEmlFiles(result.filePaths)
+    return rankMailMessages(payload.workspace, files)
+  },
+)
+
+ipcMain.handle(
+  'mail:send',
+  async (
+    _e,
+    payload: {
+      workspace: string
+      to: string
+      subject: string
+      body: string
+      attachPdf?: boolean
+      pdfPath?: string | null
+      notes?: string
+      company?: string
+      role?: string
+    },
+  ) => {
+    if (!payload.workspace) throw new Error('Open a workspace first')
+    const s = await readSettings()
+    const password = decryptSecret(s.imapPassEnc)
+    const settings = resolveSmtpSettings({
+      imapHost: s.imapHost,
+      smtpHost: s.smtpHost,
+      smtpPort: s.smtpPort,
+      user: s.imapUser || '',
+      password,
+    })
+    let attachmentPath: string | null = null
+    if (payload.attachPdf) {
+      attachmentPath = findKitPdf({
+        workspace: payload.workspace,
+        knownPath: payload.pdfPath,
+        notes: payload.notes,
+        company: payload.company,
+        role: payload.role,
+      })
+      if (!attachmentPath) {
+        throw new Error('resume.pdf was not found. Build an Apply kit first, or uncheck the attachment.')
+      }
+    }
+    return sendMail(settings, {
+      from: settings.user,
+      to: payload.to,
+      subject: payload.subject,
+      body: payload.body,
+      attachmentPath,
+    })
+  },
+)
 
 ipcMain.handle('applications:list', async (_e, workspace: string) => {
   if (!workspace) return []
@@ -1040,8 +1226,8 @@ ipcMain.handle(
 )
 
 ipcMain.handle('shell:openExternal', async (_e, url: string) => {
-  if (!/^https?:\/\//i.test(url)) {
-    throw new Error('Only http(s) URLs can be opened')
+  if (!/^(https?:\/\/|mailto:)/i.test(url)) {
+    throw new Error('Only http(s) and mailto URLs can be opened')
   }
   await shell.openExternal(url)
 })

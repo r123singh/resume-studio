@@ -17,7 +17,6 @@ export default defineConfig({
               // CJS, so they stay external and load via dynamic import().
               external: [
                 'electron',
-                '@cursor/sdk',
                 '@strands-agents/sdk',
                 /^@strands-agents\/sdk\/.*/,
                 '@aws-sdk/client-bedrock-runtime',
@@ -42,7 +41,7 @@ export default defineConfig({
           build: {
             outDir: 'dist-electron',
             rollupOptions: {
-              external: ['electron', '@cursor/sdk'],
+              external: ['electron'],
               output: {
                 format: 'cjs',
                 entryFileNames: '[name].js',

@@ -37,7 +37,7 @@ export function ActivityRail<T extends string>({
           key={item.id}
           label={item.label}
           shortcut={item.shortcut}
-          placement={side === 'right' ? 'top' : 'bottom'}
+          placement={side === 'right' ? 'left' : 'right'}
         >
           <button
             type="button"

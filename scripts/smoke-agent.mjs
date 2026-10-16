@@ -13,6 +13,19 @@ import { pathToFileURL } from 'node:url'
 const outDir = path.join(process.cwd(), 'node_modules', '.cache', 'rs-smoke-agent')
 mkdirSync(outDir, { recursive: true })
 
+const electronStub = path.join(outDir, 'electron-stub.mjs')
+writeFileSync(
+  electronStub,
+  `export const app = { getPath: () => ${JSON.stringify(path.join(tmpdir(), 'rs-electron'))}, isPackaged: true }
+export const safeStorage = {
+  isEncryptionAvailable: () => false,
+  encryptString: (s) => Buffer.from(String(s)),
+  decryptString: (b) => Buffer.from(b).toString('utf8'),
+}
+`,
+  'utf8',
+)
+
 async function bundle(entry, name) {
   const outfile = path.join(outDir, name)
   await build({
@@ -21,7 +34,8 @@ async function bundle(entry, name) {
     platform: 'node',
     format: 'esm',
     outfile,
-    external: ['@strands-agents/sdk', '@strands-agents/sdk/*', '@cursor/sdk', 'electron', 'zod'],
+    alias: { electron: electronStub },
+    external: ['@strands-agents/sdk', '@strands-agents/sdk/*', 'zod'],
   })
   return import(pathToFileURL(outfile).href)
 }
@@ -130,19 +144,66 @@ assert.ok(
 
 // Model factory builds providers without network or real keys.
 const { createModel, supportsToolLoop } = await bundle('electron/agent/models.ts', 'models.mjs')
-for (const provider of ['nvidia', 'groq', 'openai', 'anthropic', 'gemini', 'bedrock']) {
+for (const provider of ['nvidia', 'ollama', 'openai', 'anthropic', 'gemini', 'bedrock']) {
   const model = await createModel({
     provider,
     model: 'test-model',
     apiKey: 'test-key',
     region: 'us-east-1',
+    ...(provider === 'ollama' ? { baseURL: 'http://127.0.0.1:11434/v1' } : {}),
   })
   assert.ok(model, `${provider} model should construct`)
   assert.equal(supportsToolLoop(provider), true, `${provider} should support the tool loop`)
 }
-assert.equal(supportsToolLoop('cursor'), false, 'cursor cannot drive a tool loop')
+
+// Managed provider setting: no client model list, no API key, capability stands in for a model ID.
+const {
+  isManagedProvider,
+  MODEL_OPTIONS,
+  FREE_PROVIDERS,
+  PAID_PROVIDERS,
+  AGENT_CAPABLE_PROVIDERS,
+} = await bundle('src/lib/ai/providers.ts', 'providers.mjs')
+assert.equal(isManagedProvider('managed'), true)
+assert.equal(isManagedProvider('nvidia'), false)
+assert.deepEqual(MODEL_OPTIONS.managed, [], 'Settings must not offer a client-side model picker')
+assert.equal(FREE_PROVIDERS.includes('managed'), false, 'managed is account-billed, not a free key')
+assert.equal(PAID_PROVIDERS.includes('managed'), false, 'managed account is hidden from Settings')
+assert.equal(AGENT_CAPABLE_PROVIDERS.includes('managed'), true)
+assert.equal(supportsToolLoop('managed'), true)
+
+const managed = await createModel({
+  provider: 'managed',
+  model: '',
+  apiKey: '',
+  capability: 'chat',
+})
+assert.ok(managed, 'managed model should construct without an API key')
+assert.equal(
+  managed.getConfig().modelId,
+  'chat',
+  'capability is what Settings sends instead of a model ID',
+)
+
+await assert.rejects(
+  async () => {
+    for await (const _ of managed.stream([{ role: 'user', content: [{ text: 'hello' }] }])) {
+      // The constructor must not talk to the network; streaming is what requires a session.
+    }
+  },
+  (err) => {
+    assert.equal(err.name, 'PlatformError', 'managed failures stay in the platform error envelope')
+    assert.ok(
+      err.code === 'INVALID_REQUEST' || err.code === 'AUTHENTICATION_REQUIRED',
+      `expected a configuration or sign-in error, got ${err.code}: ${err.message}`,
+    )
+    return true
+  },
+  'streaming without a signed-in account must fail closed',
+)
 
 console.log('OK — agent tools, safety rails, and model factory all behave.')
 console.log(`  tools: ${Object.keys(byName).join(', ')}`)
 console.log(`  tool events recorded: ${events.length}`)
 console.log(`  proposals queued: ${proposals.length} (files written: 0)`)
+console.log('  managed provider: constructs without API key, capability-routed, fails closed unsigned')

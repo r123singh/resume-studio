@@ -44,7 +44,6 @@ rewrite, recruiter lens, agent mode — reaches the model through
 | `anthropic` | `AnthropicModel`                                   | yes       |
 | `gemini`    | `GoogleModel`                                      | yes       |
 | `bedrock`   | `BedrockModel`, local credentials                  | yes       |
-| `cursor`    | custom `Model` wrapping `@cursor/sdk`              | no        |
 
 `runner.ts` consumes the Strands stream event union
 (`modelMessageStartEvent`, `modelContentBlockDeltaEvent`, …), which is a
@@ -67,7 +66,7 @@ There was no notion of a user, a plan, an entitlement, a quota, or usage.
 ### Current NVIDIA integration
 
 NVIDIA NIM is OpenAI wire-compatible, so it rides `OpenAIModel` with a custom
-base URL and the user's own free NIM key. This is the default free path and is
+base URL and no API key. This is the default path and is
 explicitly **out of scope** for the control plane.
 
 ### Current authentication

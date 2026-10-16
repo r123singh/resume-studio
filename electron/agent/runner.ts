@@ -25,6 +25,7 @@ Hard rules:
 - Always read the target file before proposing an edit to it.
 - Cite the evidence snippet ids that justify each change in the rationale and evidence fields.
 - propose_edit does not save anything. The user reviews a diff and decides. Never claim you saved or committed a file.
+- When the prompt includes a "Selected text" block, that is the exact editor selection. You can see it. Rewrite only that span inside the open file and leave every other line unchanged. Never ask the user to paste or describe the selection.
 - Work in as few tool calls as possible, then give a short plain-language summary of what you changed and why.`
 
 export type RunAgentArgs = {
@@ -34,6 +35,8 @@ export type RunAgentArgs = {
   history?: ChatMessage[]
   workspace: string | null
   activeRelativePath: string | null
+  /** Exact editor selection, when the user invoked an action on highlighted text. */
+  selectedText?: string | null
   allowWebResearch: boolean
   systemPrompt?: string
   maxTurns?: number
@@ -52,7 +55,7 @@ export async function runAgent(args: RunAgentArgs): Promise<AgentRunResult> {
 
   if (!supportsToolLoop(provider)) {
     throw new Error(
-      'The Cursor provider cannot run tool-using agents. Choose Bedrock, NVIDIA, OpenAI, Anthropic, or Gemini in Settings.',
+      `${provider} cannot run tool-using agents. Choose another provider in Settings.`,
     )
   }
 
@@ -73,9 +76,13 @@ export async function runAgent(args: RunAgentArgs): Promise<AgentRunResult> {
     },
   })
 
+  const selected = args.selectedText?.trim()
   const contextLine = [
     args.workspace ? `Workspace: ${args.workspace}` : 'No workspace is open.',
     args.activeRelativePath ? `Currently open file: ${args.activeRelativePath}` : null,
+    selected
+      ? `Selected text (editor highlight — edit only this span):\n"""\n${selected}\n"""`
+      : null,
     `Web research is ${args.allowWebResearch ? 'enabled' : 'disabled'}.`,
   ]
     .filter(Boolean)

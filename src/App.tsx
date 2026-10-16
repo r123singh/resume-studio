@@ -8,6 +8,8 @@ import {
   Files,
   Layers,
   ListTree,
+  Mail,
+  MessageCircle,
   PanelLeftClose,
   PanelRightClose,
   Sparkles,
@@ -50,8 +52,12 @@ import {
   buildEditUserPrompt,
   buildInterviewPrepSystemPrompt,
   buildInterviewPrepUserPrompt,
+  buildMailReplySystemPrompt,
+  buildMailReplyUserPrompt,
   buildTailorSystemPrompt,
   buildTailorUserPrompt,
+  buildWhatsAppPingSystemPrompt,
+  buildWhatsAppPingUserPrompt,
   parseEditResponse,
   stripCodeFences,
 } from './lib/ai/prompts'
@@ -64,7 +70,7 @@ import {
   type AgentToolEvent,
   type ProviderId,
 } from './lib/ai/providers'
-import { analyzeRecruiterLens, type LensMode } from './lib/recruiter-lens'
+import { analyzeRecruiterLens, isResumeDocument, type LensMode } from './lib/recruiter-lens'
 import { isLargeEdit } from './lib/ai/diff'
 import { assertRateLimit, type PendingEdit } from './lib/ai/safety'
 import {
@@ -76,6 +82,38 @@ import {
 } from './lib/ai/retrieval'
 import { DiffPreviewModal, type DiffEvidence } from './components/DiffPreviewModal'
 import { EvidencePanel } from './components/EvidencePanel'
+import { WhatsAppPanel } from './components/WhatsAppPanel'
+import { MailPanel } from './components/MailPanel'
+import {
+  SAMPLE_RECRUITER_THREAD,
+  buildHeuristicPacket,
+  buildWaMeUrl,
+  buildWhatsAppPingFile,
+  extractPacketFromKitMarkdown,
+  parseRecruiterChat,
+  parseWhatsAppPacket,
+  phoneFromNotes,
+  trackerWhatsAppNotes,
+  type ParsedChat,
+  type WhatsAppPacket,
+} from './lib/whatsapp'
+import {
+  SAMPLE_JOB_EMAIL,
+  buildHeuristicReply,
+  buildMailtoUrl,
+  buildReplyEmailFile,
+  extractReplyFromKitMarkdown,
+  listingToParsed,
+  parseJobEmails,
+  parseMailReply,
+  parsedToListing,
+  normalizeRecipient,
+  replyToFromNotes,
+  trackerEmailNotes,
+  type MailListing,
+  type MailReply,
+  type MailSource,
+} from './lib/mail'
 import type { JobContext } from '../electron/preload'
 import {
   applyEvidenceSuggestions,
@@ -96,6 +134,8 @@ const INSPECTOR_RAIL_ITEMS: RailItem<PanelMode>[] = [
   { id: 'edit', icon: Sparkles, label: 'AI assistant' },
   { id: 'evidence', icon: FileSearch, label: 'Evidence-backed tailor', shortcut: 'Ctrl+Shift+E' },
   { id: 'tailor', icon: Wand2, label: 'Tailor from job description' },
+  { id: 'ping', icon: MessageCircle, label: 'WhatsApp recruiter desk', shortcut: 'Ctrl+Shift+M' },
+  { id: 'mail', icon: Mail, label: 'Mail inbox', shortcut: 'Ctrl+Shift+L' },
   { id: 'hunt', icon: Compass, label: 'Job hunt' },
   { id: 'tracker', icon: ClipboardList, label: 'Application tracker' },
   { id: 'roles', icon: Layers, label: 'Role variants' },
@@ -125,6 +165,28 @@ type OpenDoc = {
   content: string
   dirty: boolean
   lastSavedAt: number | null
+}
+
+function parseMailReplyMeta(raw?: string): MailReply | undefined {
+  if (!raw?.trim()) return undefined
+  try {
+    const parsed = JSON.parse(raw) as MailReply
+    if (parsed && typeof parsed.body === 'string') return parsed
+  } catch {
+    return undefined
+  }
+  return undefined
+}
+
+function parsePacketMeta(raw?: string): WhatsAppPacket | undefined {
+  if (!raw?.trim()) return undefined
+  try {
+    const parsed = JSON.parse(raw) as WhatsAppPacket
+    if (parsed && typeof parsed.ping === 'string') return parsed
+  } catch {
+    return undefined
+  }
+  return undefined
 }
 
 export default function App() {
@@ -188,6 +250,38 @@ export default function App() {
   const [evidenceError, setEvidenceError] = useState('')
   const [researching, setResearching] = useState(false)
   const [focusEvidence, setFocusEvidence] = useState(false)
+  const [focusPing, setFocusPing] = useState(false)
+  const [pingPaste, setPingPaste] = useState('')
+  const [pingParsed, setPingParsed] = useState<ParsedChat | null>(null)
+  const [pingRecruiter, setPingRecruiter] = useState('')
+  const [pingPhone, setPingPhone] = useState('')
+  const [pingCompany, setPingCompany] = useState('')
+  const [pingRole, setPingRole] = useState('')
+  const [pingLocation, setPingLocation] = useState('')
+  const [pingJobUrl, setPingJobUrl] = useState('')
+  const [pingPacket, setPingPacket] = useState<WhatsAppPacket>({ ping: '', why: '', bump: '' })
+  const [pingComposing, setPingComposing] = useState(false)
+  const [pingKitHint, setPingKitHint] = useState('')
+  const [pingPdfPath, setPingPdfPath] = useState<string | null>(null)
+  const [focusMail, setFocusMail] = useState(false)
+  const [mailPaste, setMailPaste] = useState('')
+  const [mailItems, setMailItems] = useState<MailListing[]>([])
+  const [mailSelectedId, setMailSelectedId] = useState<string | null>(null)
+  const [mailRecruiter, setMailRecruiter] = useState('')
+  const [mailReplyTo, setMailReplyTo] = useState('')
+  const [mailCompany, setMailCompany] = useState('')
+  const [mailRole, setMailRole] = useState('')
+  const [mailLocation, setMailLocation] = useState('')
+  const [mailJobUrl, setMailJobUrl] = useState('')
+  const [mailReply, setMailReply] = useState<MailReply>({ subject: '', body: '' })
+  const [mailFetching, setMailFetching] = useState(false)
+  const [mailComposing, setMailComposing] = useState(false)
+  const [mailKitHint, setMailKitHint] = useState('')
+  const [mailPdfPath, setMailPdfPath] = useState<string | null>(null)
+  const [mailHasImap, setMailHasImap] = useState(false)
+  const [mailSending, setMailSending] = useState(false)
+  const [mailAttachPdf, setMailAttachPdf] = useState(true)
+  const [mailStandalone, setMailStandalone] = useState(false)
   const [ghostText, setGhostText] = useState('')
   const [ghostStreaming, setGhostStreaming] = useState(false)
   const [pendingEvidence, setPendingEvidence] = useState<DiffEvidence[]>([])
@@ -250,6 +344,7 @@ export default function App() {
       setAgentMode(s.agentMode !== false)
       setProvider(s.provider)
       setModel(s.model)
+      setMailHasImap(Boolean(s.hasImap))
     })()
   }, [openWorkspace])
 
@@ -441,6 +536,7 @@ export default function App() {
       setAgentMode(s.agentMode !== false)
       setProvider(s.provider)
       setModel(s.model)
+      setMailHasImap(Boolean(s.hasImap))
     })
   }
 
@@ -548,6 +644,22 @@ export default function App() {
         window.setTimeout(() => setFocusEvidence(false), 400)
         return
       }
+      if (mod && e.shiftKey && e.key.toLowerCase() === 'm') {
+        e.preventDefault()
+        setInspectorView('ping')
+        setInspectorOpen(true)
+        setFocusPing(true)
+        window.setTimeout(() => setFocusPing(false), 400)
+        return
+      }
+      if (mod && e.shiftKey && e.key.toLowerCase() === 'l') {
+        e.preventDefault()
+        setInspectorView('mail')
+        setInspectorOpen(true)
+        setFocusMail(true)
+        window.setTimeout(() => setFocusMail(false), 400)
+        return
+      }
       if (mod && e.shiftKey && e.key.toLowerCase() === 'a') {
         e.preventDefault()
         setAchievementOpen(true)
@@ -633,7 +745,17 @@ export default function App() {
       jobUrl: string
       jobDescription: string
     },
-    opts?: { buildKit?: boolean; focusTracker?: boolean },
+    opts?: {
+      buildKit?: boolean
+      focusTracker?: boolean
+      channel?: 'whatsapp' | 'email'
+      recruiter?: string
+      phone?: string
+      replyTo?: string
+      mailSource?: string
+      packet?: WhatsAppPacket
+      reply?: MailReply
+    },
   ) => {
     if (!workspace) {
       throw new Error('Open a workspace folder first.')
@@ -688,6 +810,13 @@ export default function App() {
         company: input.company,
         role: input.role,
         focusTracker: opts?.focusTracker ? '1' : '0',
+        channel: opts?.channel || '',
+        recruiter: opts?.recruiter || '',
+        phone: opts?.phone || '',
+        replyTo: opts?.replyTo || '',
+        mailSource: opts?.mailSource || '',
+        packet: opts?.packet ? JSON.stringify(opts.packet) : '',
+        reply: opts?.reply ? JSON.stringify(opts.reply) : '',
       },
     })
 
@@ -730,6 +859,13 @@ export default function App() {
           company: input.company,
           role: input.role,
           focusTracker: opts?.focusTracker ? '1' : '0',
+          channel: opts?.channel || '',
+          recruiter: opts?.recruiter || '',
+          phone: opts?.phone || '',
+          replyTo: opts?.replyTo || '',
+          mailSource: opts?.mailSource || '',
+          packet: opts?.packet ? JSON.stringify(opts.packet) : '',
+          reply: opts?.reply ? JSON.stringify(opts.reply) : '',
         },
       })
       setStreamPreview('')
@@ -770,7 +906,19 @@ export default function App() {
 
   const buildAndWriteApplyKit = async (
     sourceMarkdown: string,
-    opts?: { company?: string; role?: string; sourceRel?: string; focusTracker?: boolean },
+    opts?: {
+      company?: string
+      role?: string
+      sourceRel?: string
+      focusTracker?: boolean
+      channel?: 'whatsapp' | 'email' | 'studio'
+      recruiter?: string
+      phone?: string
+      replyTo?: string
+      mailSource?: string
+      packet?: WhatsAppPacket
+      reply?: MailReply
+    },
   ) => {
     if (!workspace) throw new Error('Open a workspace folder first.')
     const source = sourceMarkdown.trim()
@@ -783,6 +931,43 @@ export default function App() {
     const slug = kitFolderName(parts)
     const resumeMd = buildResumeMarkdownFile(parts)
     const pdfHtml = markdownToPrintHtml(resumeMd, `${parts.company} — ${parts.role}`)
+    const whatsappFile =
+      opts?.channel === 'whatsapp' && opts.packet
+        ? buildWhatsAppPingFile({
+            company: parts.company,
+            role: parts.role,
+            recruiter: opts.recruiter || '',
+            phone: opts.phone || '',
+            packet: opts.packet,
+          })
+        : ''
+    const emailFile =
+      opts?.channel === 'email' && opts.reply
+        ? buildReplyEmailFile({
+            company: parts.company,
+            role: parts.role,
+            recruiter: opts.recruiter || '',
+            replyTo: opts.replyTo || '',
+            reply: opts.reply,
+          })
+        : ''
+    const notes =
+      opts?.channel === 'whatsapp'
+        ? trackerWhatsAppNotes({
+            kitSlug: slug,
+            sourceRel: opts?.sourceRel || activeRel || undefined,
+            phone: opts.phone,
+            recruiter: opts.recruiter,
+          })
+        : opts?.channel === 'email'
+          ? trackerEmailNotes({
+              kitSlug: slug,
+              sourceRel: opts?.sourceRel || activeRel || undefined,
+              replyTo: opts.replyTo,
+              recruiter: opts.recruiter,
+              mailSource: opts.mailSource,
+            })
+        : `kit: apply-kits/${slug}/; resume: ${opts?.sourceRel || activeRel || 'editor'}`
 
     const result = await window.resumeStudio.writeApplyKit({
       workspace,
@@ -791,7 +976,12 @@ export default function App() {
         'resume.md': resumeMd,
         'cover-letter.md': buildCoverLetterFile(parts),
         'form-snippets.md': buildFormSnippetsFile(parts),
-        'CHECKLIST.md': buildChecklistMarkdown(parts),
+        'CHECKLIST.md': buildChecklistMarkdown(parts, {
+          whatsapp: Boolean(whatsappFile),
+          email: Boolean(emailFile),
+        }),
+        ...(whatsappFile ? { 'whatsapp-ping.md': whatsappFile } : {}),
+        ...(emailFile ? { 'reply-email.md': emailFile } : {}),
       },
       pdfHtml,
       tracker: {
@@ -799,18 +989,39 @@ export default function App() {
         role: parts.role,
         location: parts.location,
         jobUrl: parts.jobUrl,
-        notes: `kit: apply-kits/${slug}/; resume: ${opts?.sourceRel || activeRel || 'editor'}`,
+        source:
+          opts?.channel === 'whatsapp' ? 'WhatsApp' : opts?.channel === 'email' ? 'Email' : 'Resume Studio',
+        notes,
       },
     })
 
     await refreshTree(workspace)
     await refreshApplications()
+    const extra = [whatsappFile ? '\n• whatsapp-ping.md' : '', emailFile ? '\n• reply-email.md' : '']
+      .join('')
     pushChat(
       'assistant',
-      `Apply kit ready: apply-kits/${slug}/\n• resume.md + resume.pdf\n• cover-letter.md\n• form-snippets.md\n• CHECKLIST.md\nLogged as ready-to-apply — open the Tracker tab to manage status.`,
+      `Apply kit ready: apply-kits/${slug}/\n• resume.md + resume.pdf\n• cover-letter.md\n• form-snippets.md\n• CHECKLIST.md${extra}\nLogged as ready-to-apply — open the Tracker tab to manage status.`,
     )
     setStatus(`Apply kit: apply-kits/${slug}`)
-    if (opts?.focusTracker !== false) {
+    if (opts?.channel === 'whatsapp') {
+      setPingPdfPath(result.pdfPath)
+      setPingKitHint(
+        result.pdfPath
+          ? `Kit ready. Attach ${result.pdfPath.split(/[/\\]/).slice(-2).join('/')} in the WhatsApp chat.`
+          : `Kit ready in apply-kits/${slug}/. Attach resume.pdf in the WhatsApp chat.`,
+      )
+    }
+    if (opts?.channel === 'email') {
+      setMailPdfPath(result.pdfPath)
+      setMailKitHint(
+        result.pdfPath
+          ? `Kit ready. Attach ${result.pdfPath.split(/[/\\]/).slice(-2).join('/')} in your reply.`
+          : `Kit ready in apply-kits/${slug}/. Attach resume.pdf in the mail client.`,
+      )
+    }
+    const stayOnChannel = opts?.channel === 'whatsapp' || opts?.channel === 'email'
+    if (opts?.focusTracker !== false && !stayOnChannel) {
       setInspectorView('tracker')
       setInspectorOpen(true)
       setFocusTracker(true)
@@ -819,6 +1030,8 @@ export default function App() {
       } else {
         await window.resumeStudio.openPath(result.kitDir)
       }
+    } else if (stayOnChannel && result.pdfPath) {
+      await window.resumeStudio.showItemInFolder(result.pdfPath)
     }
   }
 
@@ -843,6 +1056,541 @@ export default function App() {
     } finally {
       setBusy(false)
     }
+  }
+
+  const copyText = async (text: string, label: string) => {
+    try {
+      await navigator.clipboard.writeText(text)
+      setStatus(`Copied ${label}`)
+    } catch {
+      setStatus(`Could not copy ${label}`)
+    }
+  }
+
+  const applyPingParse = async (raw: string) => {
+    const parsed = parseRecruiterChat(raw)
+    const resume = (await readBaseResume()) || content
+    const packet = buildHeuristicPacket(
+      {
+        ...parsed,
+        recruiterName: parsed.recruiterName,
+      },
+      resume,
+    )
+    setPingParsed(parsed)
+    setPingRecruiter(parsed.recruiterName)
+    setPingPhone(parsed.phones[0] || '')
+    setPingCompany(parsed.company)
+    setPingRole(parsed.role)
+    setPingLocation(parsed.location)
+    setPingJobUrl(parsed.jobUrl)
+    setPingPacket(packet)
+    if (parsed.jobText) setLensJd(parsed.jobText)
+    setStatus(
+      parsed.company || parsed.role
+        ? `Parsed ${parsed.role || 'role'} at ${parsed.company || 'company'} — ping drafted locally`
+        : 'Thread parsed. Fill company and role, then send.',
+    )
+  }
+
+  const livePingParsed = (): ParsedChat => ({
+    recruiterName: pingRecruiter,
+    phones: pingPhone ? [pingPhone] : pingParsed?.phones || [],
+    company: pingCompany,
+    role: pingRole,
+    location: pingLocation,
+    jobUrl: pingJobUrl,
+    jobText: pingParsed?.jobText || pingPaste,
+    messages: pingParsed?.messages || [],
+  })
+
+  const composeWhatsAppPing = async () => {
+    if (!workspace) {
+      pushChat('assistant', 'Open a workspace folder first.')
+      return
+    }
+    const parsed = livePingParsed()
+    if (!parsed.jobText.trim()) {
+      pushChat('assistant', 'Paste a recruiter thread first.')
+      return
+    }
+    assertRateLimit()
+    setPingComposing(true)
+    setBusy(true)
+    try {
+      const resume = retrieveRelevantSections(
+        (await readBaseResume()) || content,
+        `${parsed.role} ${parsed.jobText}`,
+        MAX_RESUME_CHARS,
+      )
+      const ctx = await getApiContext()
+      const heuristic = pingPacket.ping.trim()
+        ? pingPacket
+        : buildHeuristicPacket(parsed, resume)
+      const messages = [
+        { role: 'system' as const, content: buildWhatsAppPingSystemPrompt() },
+        {
+          role: 'user' as const,
+          content: buildWhatsAppPingUserPrompt({
+            recruiter: parsed.recruiterName,
+            company: parsed.company,
+            role: parsed.role,
+            location: parsed.location,
+            jobDescription: truncateText(parsed.jobText, MAX_JD_CHARS),
+            resume,
+            heuristicPing: heuristic.ping,
+          }),
+        },
+      ]
+      const result = await streamChat({
+        ...ctx,
+        capability: 'chat',
+        messages,
+        onChunk: (_chunk, assembled) => {
+          const partial = parseWhatsAppPacket(assembled)
+          if (partial.ping) setPingPacket(partial)
+        },
+      })
+      setPingPacket(parseWhatsAppPacket(stripCodeFences(result.text)))
+      setStatus(`Ping polished · ${formatAttribution(result)}`)
+    } catch (err) {
+      pushChat('assistant', err instanceof Error ? err.message : String(err))
+    } finally {
+      setPingComposing(false)
+      setBusy(false)
+    }
+  }
+
+  const tailorFromWhatsApp = async () => {
+    if (!pingCompany.trim() || !pingRole.trim()) {
+      pushChat('assistant', 'Company and role are required before tailoring.')
+      return
+    }
+    const parsed = livePingParsed()
+    if (!parsed.jobText.trim()) {
+      pushChat('assistant', 'Paste a recruiter thread or JD first.')
+      return
+    }
+    setBusy(true)
+    try {
+      await runTailorFromJd(
+        {
+          company: pingCompany,
+          role: pingRole,
+          location: pingLocation,
+          jobUrl: pingJobUrl,
+          jobDescription: parsed.jobText,
+        },
+        {
+          focusTracker: false,
+          channel: 'whatsapp',
+          recruiter: pingRecruiter,
+          phone: pingPhone,
+          packet: pingPacket,
+        },
+      )
+    } catch (err) {
+      pushChat('assistant', err instanceof Error ? err.message : String(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const openWhatsAppKind = async (kind: 'ping' | 'bump' | 'self') => {
+    const text =
+      kind === 'bump'
+        ? pingPacket.bump
+        : kind === 'self'
+          ? [
+              pingCompany && pingRole ? `${pingCompany} / ${pingRole}` : 'Resume Studio kit',
+              pingPacket.ping,
+              pingPacket.why ? `Why-fit:\n${pingPacket.why}` : '',
+              pingKitHint || 'Attach resume.pdf from the apply kit.',
+            ]
+              .filter(Boolean)
+              .join('\n\n')
+          : pingPacket.ping
+    if (!text.trim()) {
+      setStatus('Nothing to send yet')
+      return
+    }
+    const url = buildWaMeUrl(kind === 'self' ? '' : pingPhone, text)
+    try {
+      await window.resumeStudio.openExternal(url)
+      setStatus(kind === 'self' ? 'WhatsApp opened — pick your own chat' : 'WhatsApp opened with ping')
+    } catch (err) {
+      pushChat('assistant', err instanceof Error ? err.message : String(err))
+    }
+  }
+
+  const pingFromTrackerRow = async (row: ApplicationRow) => {
+    if (!workspace) return
+    const kitMatch = row.notes.match(/kit:\s*(apply-kits\/[^;\s]+)/i)
+    let ping = pingPacket.ping
+    if (kitMatch) {
+      const rel = kitMatch[1].replace(/\/$/, '')
+      try {
+        const filePath = await window.resumeStudio.pathJoin(workspace, rel, 'whatsapp-ping.md')
+        const md = await window.resumeStudio.readFile(filePath)
+        const packet = extractPacketFromKitMarkdown(md)
+        if (packet.ping) {
+          setPingPacket(packet)
+          ping = packet.ping
+        }
+      } catch {
+        // kit may predate this file
+      }
+    }
+    const phone = phoneFromNotes(row.notes)
+    const url = buildWaMeUrl(phone, ping)
+    try {
+      await window.resumeStudio.openExternal(url)
+      setStatus(`WhatsApp opened for ${row.company}`)
+    } catch (err) {
+      pushChat('assistant', err instanceof Error ? err.message : String(err))
+    }
+  }
+
+  const applyMailListing = async (item: MailListing) => {
+    const parsed = listingToParsed(item)
+    const resume = (await readBaseResume()) || content
+    const reply = buildHeuristicReply(
+      {
+        ...parsed,
+        recruiter: item.recruiter,
+        company: item.company,
+        role: item.role,
+        replyTo: item.replyTo,
+      },
+      resume,
+    )
+    setMailStandalone(false)
+    setMailSelectedId(item.id)
+    setMailRecruiter(item.recruiter)
+    setMailReplyTo(item.replyTo || item.fromEmail)
+    setMailCompany(item.company)
+    setMailRole(item.role)
+    setMailLocation(item.location)
+    setMailJobUrl(item.jobUrl)
+    setMailReply(reply)
+    if (item.description) setLensJd(item.description)
+  }
+
+  const applyMailParse = async (raw: string) => {
+    const parsedList = parseJobEmails(raw)
+    const items = parsedList
+      .filter((p) => p.isJob || p.jobText.trim())
+      .map((parsed) =>
+        parsedToListing(parsed, {
+          score: parsed.jobLikelihood,
+          scoreReasons: parsed.reasons,
+        }),
+      )
+    if (!items.length) {
+      setStatus('No job found in that email. Check the paste includes a JD or job URL.')
+      return
+    }
+    setMailItems(items)
+    await applyMailListing(items[0])
+    setStatus(
+      items.length > 1
+        ? `Parsed ${items.length} roles from mail`
+        : `Parsed ${items[0].role || 'role'} at ${items[0].company || 'company'} — reply drafted locally`,
+    )
+  }
+
+  const fetchMailInbox = async () => {
+    if (!workspace) {
+      pushChat('assistant', 'Open a workspace folder first.')
+      return
+    }
+    setMailFetching(true)
+    setBusy(true)
+    try {
+      const results = await window.resumeStudio.fetchMailInbox(workspace)
+      setMailItems(results)
+      if (results[0]) await applyMailListing(results[0])
+      else {
+        setMailSelectedId(null)
+        setMailStandalone(false)
+      }
+      setStatus(
+        results.length
+          ? `Inbox: ${results.length} job-like message${results.length === 1 ? '' : 's'}`
+          : 'Inbox fetched — no job-like mail in the lookback window',
+      )
+    } catch (err) {
+      pushChat('assistant', err instanceof Error ? err.message : String(err))
+    } finally {
+      setMailFetching(false)
+      setBusy(false)
+    }
+  }
+
+  const importMailFiles = async () => {
+    if (!workspace) {
+      pushChat('assistant', 'Open a workspace folder first.')
+      return
+    }
+    setMailFetching(true)
+    setBusy(true)
+    try {
+      const results = await window.resumeStudio.importMailFiles(workspace)
+      if (!results.length) {
+        setStatus('No files imported')
+        return
+      }
+      setMailItems(results)
+      await applyMailListing(results[0])
+      setStatus(`Imported ${results.length} job-like message${results.length === 1 ? '' : 's'}`)
+    } catch (err) {
+      pushChat('assistant', err instanceof Error ? err.message : String(err))
+    } finally {
+      setMailFetching(false)
+      setBusy(false)
+    }
+  }
+
+  const composeMailReply = async () => {
+    if (!workspace) {
+      pushChat('assistant', 'Open a workspace folder first.')
+      return
+    }
+    const selected = mailItems.find((item) => item.id === mailSelectedId)
+    const jobText = selected?.description || mailPaste
+    if (!jobText.trim()) {
+      pushChat('assistant', 'Parse or fetch a job email first.')
+      return
+    }
+    assertRateLimit()
+    setMailComposing(true)
+    setBusy(true)
+    try {
+      const resume = retrieveRelevantSections(
+        (await readBaseResume()) || content,
+        `${mailRole} ${jobText}`,
+        MAX_RESUME_CHARS,
+      )
+      const ctx = await getApiContext()
+      const heuristic = mailReply.body.trim()
+        ? mailReply.body
+        : buildHeuristicReply(
+            {
+              from: selected?.from || '',
+              fromEmail: selected?.fromEmail || '',
+              replyTo: mailReplyTo,
+              subject: selected?.subject || '',
+              date: selected?.date || '',
+              company: mailCompany,
+              role: mailRole,
+              location: mailLocation,
+              jobUrl: mailJobUrl,
+              recruiter: mailRecruiter,
+              source: (selected?.source as MailSource) || 'Recruiter',
+              jobText,
+              isJob: true,
+              jobLikelihood: selected?.jobLikelihood || 70,
+              reasons: selected?.scoreReasons || [],
+            },
+            resume,
+          ).body
+      const messages = [
+        { role: 'system' as const, content: buildMailReplySystemPrompt() },
+        {
+          role: 'user' as const,
+          content: buildMailReplyUserPrompt({
+            recruiter: mailRecruiter,
+            company: mailCompany,
+            role: mailRole,
+            location: mailLocation,
+            jobDescription: truncateText(jobText, MAX_JD_CHARS),
+            resume,
+            heuristicReply: heuristic,
+          }),
+        },
+      ]
+      const result = await streamChat({
+        ...ctx,
+        capability: 'chat',
+        messages,
+        onChunk: (_chunk, assembled) => {
+          const partial = parseMailReply(assembled)
+          if (partial.body) setMailReply(partial)
+        },
+      })
+      setMailReply(parseMailReply(stripCodeFences(result.text)))
+      setStatus(`Reply polished · ${formatAttribution(result)}`)
+    } catch (err) {
+      pushChat('assistant', err instanceof Error ? err.message : String(err))
+    } finally {
+      setMailComposing(false)
+      setBusy(false)
+    }
+  }
+
+  const tailorFromMail = async () => {
+    if (!mailCompany.trim() || !mailRole.trim()) {
+      pushChat('assistant', 'Company and role are required before tailoring.')
+      return
+    }
+    const selected = mailItems.find((item) => item.id === mailSelectedId)
+    const jobText = selected?.description || mailPaste
+    if (!jobText.trim()) {
+      pushChat('assistant', 'Parse or fetch a job email first.')
+      return
+    }
+    setBusy(true)
+    try {
+      await runTailorFromJd(
+        {
+          company: mailCompany,
+          role: mailRole,
+          location: mailLocation,
+          jobUrl: mailJobUrl,
+          jobDescription: jobText,
+        },
+        {
+          focusTracker: false,
+          channel: 'email',
+          recruiter: mailRecruiter,
+          replyTo: mailReplyTo,
+          mailSource: selected?.source,
+          reply: mailReply,
+        },
+      )
+    } catch (err) {
+      pushChat('assistant', err instanceof Error ? err.message : String(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const startStandaloneMail = () => {
+    setMailStandalone(true)
+    setMailSelectedId(null)
+    setMailRecruiter('')
+    setMailReplyTo('')
+    setMailCompany('')
+    setMailRole('')
+    setMailLocation('')
+    setMailJobUrl('')
+    setMailReply({ subject: '', body: '' })
+    setMailKitHint('')
+    setStatus('New mail — fill To, subject, and body')
+  }
+
+  const openMailReply = async () => {
+    if (!mailReply.body.trim()) {
+      setStatus('Nothing to send yet')
+      return
+    }
+    const url = buildMailtoUrl(mailReplyTo, mailReply)
+    try {
+      await window.resumeStudio.openExternal(url)
+      setStatus('Mail client opened with reply')
+    } catch (err) {
+      pushChat('assistant', err instanceof Error ? err.message : String(err))
+    }
+  }
+
+  const sendMailReply = async () => {
+    if (!workspace) {
+      pushChat('assistant', 'Open a workspace folder first.')
+      return
+    }
+    const to = normalizeRecipient(mailReplyTo)
+    if (!to) {
+      pushChat('assistant', 'To must be a single email address.')
+      return
+    }
+    if (!mailReply.subject.trim() || !mailReply.body.trim()) {
+      pushChat('assistant', 'Subject and body are required before sending.')
+      return
+    }
+    if (!mailHasImap) {
+      pushChat('assistant', 'Save an app password in Settings before sending.')
+      return
+    }
+    const attach = mailAttachPdf && Boolean(mailPdfPath)
+    const kind = mailStandalone ? 'message' : 'reply'
+    const confirmed = window.confirm(
+      [
+        `Send this ${kind} to ${to}?`,
+        '',
+        `Subject: ${mailReply.subject}`,
+        attach ? 'Attachment: resume.pdf' : 'No attachment',
+        '',
+        'This sends from your mailbox. It cannot be undone.',
+      ].join('\n'),
+    )
+    if (!confirmed) return
+    setMailSending(true)
+    setBusy(true)
+    try {
+      const result = await window.resumeStudio.sendMail({
+        workspace,
+        to,
+        subject: mailReply.subject,
+        body: mailReply.body,
+        attachPdf: attach,
+        pdfPath: mailPdfPath,
+        company: mailCompany,
+        role: mailRole,
+      })
+      const extra = attach ? ' with resume.pdf' : ''
+      setMailKitHint(
+        mailStandalone
+          ? `Sent to ${result.to}${extra}.`
+          : `Sent to ${result.to}${extra}. Mark the tracker row applied when you are done.`,
+      )
+      setStatus(`Sent to ${result.to}`)
+      pushChat(
+        'assistant',
+        mailStandalone
+          ? `Sent message to ${result.to}${extra}.`
+          : `Sent reply to ${result.to} for ${mailRole || 'the role'} at ${mailCompany || 'the company'}${extra}.`,
+      )
+    } catch (err) {
+      pushChat('assistant', err instanceof Error ? err.message : String(err))
+    } finally {
+      setMailSending(false)
+      setBusy(false)
+    }
+  }
+
+  const mailFromTrackerRow = async (row: ApplicationRow) => {
+    if (!workspace) return
+    const kitMatch = row.notes.match(/kit:\s*(apply-kits\/[^;\s]+)/i)
+    if (kitMatch) {
+      const rel = kitMatch[1].replace(/\/$/, '')
+      try {
+        const filePath = await window.resumeStudio.pathJoin(workspace, rel, 'reply-email.md')
+        const md = await window.resumeStudio.readFile(filePath)
+        const extracted = extractReplyFromKitMarkdown(md)
+        if (extracted.body) setMailReply(extracted)
+      } catch {
+        // kit may predate this file
+      }
+      try {
+        const pdf = await window.resumeStudio.pathJoin(workspace, rel, 'resume.pdf')
+        setMailPdfPath(pdf)
+        setMailAttachPdf(true)
+      } catch {
+        // no pdf yet
+      }
+    }
+    const to = replyToFromNotes(row.notes)
+    setMailCompany(row.company)
+    setMailRole(row.role)
+    setMailLocation(row.location)
+    setMailJobUrl(row.jobUrl)
+    if (to) setMailReplyTo(to)
+    setMailStandalone(false)
+    setInspectorView('mail')
+    setInspectorOpen(true)
+    setFocusMail(true)
+    window.setTimeout(() => setFocusMail(false), 400)
+    setStatus(`Draft loaded for ${row.company} — review and click Send reply`)
   }
 
   const runJobHunt = async () => {
@@ -1070,7 +1818,7 @@ export default function App() {
    * Agentic path: the model plans with tools, then hands back edit proposals.
    * Nothing is written until the user accepts the diff.
    */
-  const runAgentTask = async (instruction: string) => {
+  const runAgentTask = async (instruction: string, selectedOverride?: string) => {
     if (!instruction.trim()) return
     if (!workspace) {
       pushChat('assistant', 'Open a workspace first so the agent can read your resume files.')
@@ -1085,15 +1833,25 @@ export default function App() {
     try {
       assertRateLimit()
       const ctx = await getApiContext()
-      const activeRel =
+      const openRel =
         activePath && workspace
           ? activePath.slice(workspace.length + 1).replace(/\\/g, '/')
-          : null
+          : activeRel
+      const ed = editorRef.current
+      const model = ed?.getModel()
+      const range = ed?.getSelection()
+      const liveSelection =
+        model && range && !range.isEmpty() ? model.getValueInRange(range).trim() : ''
+      const selectedText = (selectedOverride || liveSelection || selection).trim()
+      const prompt = selectedText
+        ? `${instruction}\n\nSelected text:\n"""\n${selectedText}\n"""`
+        : instruction
 
       const result = await runAgent({
-        prompt: instruction,
+        prompt,
         workspace,
-        activeRelativePath: activeRel,
+        activeRelativePath: openRel,
+        selectedText: selectedText || null,
         provider: ctx.provider,
         model: ctx.model,
         onText: (_delta, assembled) => {
@@ -1183,9 +1941,10 @@ export default function App() {
     }
   }
 
-  const editWithChat = async (instruction: string) => {
+  const editWithChat = async (instruction: string, selectedOverride?: string) => {
+    const chosenSelection = (selectedOverride ?? selection).trim()
     if (agentMode && supportsAgentMode(provider)) {
-      return runAgentTask(instruction)
+      return runAgentTask(instruction, chosenSelection)
     }
     if (!activePath) {
       pushChat('assistant', 'Open a resume file first.')
@@ -1210,7 +1969,7 @@ export default function App() {
           content: buildEditUserPrompt({
             instruction,
             openFile: openTrimmed,
-            selection: selection || undefined,
+            selection: chosenSelection || undefined,
             baseResume: baseTrimmed,
           }),
         },
@@ -1254,7 +2013,7 @@ export default function App() {
       })
 
       const before =
-        parsed.mode === 'selection' && selection ? selection : content
+        parsed.mode === 'selection' && chosenSelection ? chosenSelection : content
       const after = parsed.content
       const needsConfirm =
         confirmLargeEdits ||
@@ -1266,7 +2025,7 @@ export default function App() {
         title: parsed.mode === 'selection' ? 'AI selection edit' : 'AI full-file edit',
         before,
         after,
-        mode: parsed.mode === 'selection' && selection ? 'selection' : 'file',
+        mode: parsed.mode === 'selection' && chosenSelection ? 'selection' : 'file',
         note: parsed.note,
         selectionRange: selectionRangeRef.current || undefined,
       }
@@ -1580,24 +2339,28 @@ export default function App() {
         group: 'command',
         run: () => setSettingsOpen(true),
       },
-      {
-        id: 'lens-edit',
-        label: 'Recruiter Lens: Edit mode',
-        group: 'command',
-        run: () => setLensMode('edit'),
-      },
-      {
-        id: 'lens-ats',
-        label: 'Recruiter Lens: ATS mode',
-        group: 'command',
-        run: () => setLensMode('ats'),
-      },
-      {
-        id: 'lens-scan',
-        label: 'Recruiter Lens: Recruiter scan',
-        group: 'command',
-        run: () => setLensMode('scan'),
-      },
+      ...(isResumeDocument(activeRel)
+        ? [
+            {
+              id: 'lens-edit',
+              label: 'Recruiter Lens: Edit mode',
+              group: 'command' as const,
+              run: () => setLensMode('edit'),
+            },
+            {
+              id: 'lens-ats',
+              label: 'Recruiter Lens: ATS mode',
+              group: 'command' as const,
+              run: () => setLensMode('ats'),
+            },
+            {
+              id: 'lens-scan',
+              label: 'Recruiter Lens: Recruiter scan',
+              group: 'command' as const,
+              run: () => setLensMode('scan'),
+            },
+          ]
+        : []),
       {
         id: 'achievement',
         label: 'Open Achievement builder',
@@ -1638,6 +2401,42 @@ export default function App() {
         },
       },
       {
+        id: 'ping',
+        label: 'WhatsApp recruiter desk',
+        hint: 'Ctrl+Shift+M',
+        group: 'command',
+        run: () => {
+          setInspectorView('ping')
+          setInspectorOpen(true)
+          setFocusPing(true)
+          window.setTimeout(() => setFocusPing(false), 400)
+        },
+      },
+      {
+        id: 'mail',
+        label: 'Mail inbox (source jobs from email)',
+        hint: 'Ctrl+Shift+L',
+        group: 'command',
+        run: () => {
+          setInspectorView('mail')
+          setInspectorOpen(true)
+          setFocusMail(true)
+          window.setTimeout(() => setFocusMail(false), 400)
+        },
+      },
+      {
+        id: 'mail-compose',
+        label: 'Compose new mail',
+        group: 'command',
+        run: () => {
+          startStandaloneMail()
+          setInspectorView('mail')
+          setInspectorOpen(true)
+          setFocusMail(true)
+          window.setTimeout(() => setFocusMail(false), 400)
+        },
+      },
+      {
         id: 'goto-file',
         label: 'Go to file…',
         hint: 'Ctrl+P',
@@ -1655,7 +2454,7 @@ export default function App() {
       },
     ]
     return cmds
-  }, [workspace, content, activePath])
+  }, [workspace, content, activePath, activeRel])
 
   const title = useMemo(() => activeRel || 'Resume Studio', [activeRel])
 
@@ -1665,13 +2464,13 @@ export default function App() {
   )
 
   const lensScore = useMemo(() => {
-    if (!content.trim() || !lensJobDescription.trim()) return null
+    if (!isResumeDocument(activeRel) || !content.trim() || !lensJobDescription.trim()) return null
     try {
       return analyzeRecruiterLens(content, lensJobDescription).keywords.score
     } catch {
       return null
     }
-  }, [content, lensJobDescription])
+  }, [content, lensJobDescription, activeRel])
 
   if (!workspace) {
     return (
@@ -1759,7 +2558,7 @@ export default function App() {
               label={sidebarOpen ? 'Collapse sidebar' : 'Expand sidebar'}
               shortcut="Ctrl+B"
               onClick={() => setSidebarOpen((v) => !v)}
-              placement="top"
+              placement="right"
             />
           }
         />
@@ -1806,10 +2605,11 @@ export default function App() {
           ghostStreaming={ghostStreaming}
           theme={resolveTheme(theme)}
           aiBusy={busy || streamBusy}
-          onAiAction={(instruction) => {
+          onAiAction={(instruction, selectedText) => {
+            if (selectedText.trim()) setSelection(selectedText)
             setInspectorView('edit')
             setInspectorOpen(true)
-            void editWithChat(instruction)
+            void editWithChat(instruction, selectedText)
           }}
           onGhostAccept={() => {
             if (!ghostText) return
@@ -1911,6 +2711,8 @@ export default function App() {
             })
           }}
           onInterviewPrepRow={(row) => void interviewPrepFromTrackerRow(row)}
+          onWhatsAppPingRow={(row) => void pingFromTrackerRow(row)}
+          onMailReplyRow={(row) => void mailFromTrackerRow(row)}
           onOpenAbsolute={openAbsolute}
           onTreeRefresh={async () => {
             if (workspace) await refreshTree(workspace)
@@ -1977,9 +2779,123 @@ export default function App() {
               }}
             />
           }
+          pingSlot={
+            <WhatsAppPanel
+              paste={pingPaste}
+              parsed={pingParsed}
+              packet={pingPacket}
+              recruiter={pingRecruiter}
+              phone={pingPhone}
+              company={pingCompany}
+              role={pingRole}
+              location={pingLocation}
+              jobUrl={pingJobUrl}
+              busy={busy || streamBusy}
+              composing={pingComposing}
+              kitHint={pingKitHint}
+              onPasteChange={setPingPaste}
+              onRecruiterChange={setPingRecruiter}
+              onPhoneChange={setPingPhone}
+              onCompanyChange={setPingCompany}
+              onRoleChange={setPingRole}
+              onLocationChange={setPingLocation}
+              onJobUrlChange={setPingJobUrl}
+              onPingChange={(ping) => setPingPacket((p) => ({ ...p, ping }))}
+              onWhyChange={(why) => setPingPacket((p) => ({ ...p, why }))}
+              onBumpChange={(bump) => setPingPacket((p) => ({ ...p, bump }))}
+              onParse={() => void applyPingParse(pingPaste)}
+              onSample={() => {
+                setPingPaste(SAMPLE_RECRUITER_THREAD)
+                void applyPingParse(SAMPLE_RECRUITER_THREAD)
+              }}
+              onCompose={() => void composeWhatsAppPing()}
+              onTailor={() => void tailorFromWhatsApp()}
+              onOpenWhatsApp={(kind) => void openWhatsAppKind(kind)}
+              onCopy={(kind) => {
+                const text =
+                  kind === 'why' ? pingPacket.why : kind === 'bump' ? pingPacket.bump : pingPacket.ping
+                void copyText(text, kind)
+              }}
+              onRevealPdf={
+                pingPdfPath
+                  ? () => {
+                      void window.resumeStudio.showItemInFolder(pingPdfPath)
+                    }
+                  : undefined
+              }
+            />
+          }
+          mailSlot={
+            <MailPanel
+              paste={mailPaste}
+              items={mailItems}
+              selectedId={mailSelectedId}
+              recruiter={mailRecruiter}
+              replyTo={mailReplyTo}
+              company={mailCompany}
+              role={mailRole}
+              location={mailLocation}
+              jobUrl={mailJobUrl}
+              reply={mailReply}
+              busy={busy || streamBusy}
+              fetching={mailFetching}
+              composing={mailComposing}
+              sending={mailSending}
+              hasImap={mailHasImap}
+              attachPdf={mailAttachPdf}
+              canAttach={Boolean(mailPdfPath)}
+              standalone={mailStandalone}
+              kitHint={mailKitHint}
+              onPasteChange={setMailPaste}
+              onSelect={(id) => {
+                const item = mailItems.find((m) => m.id === id)
+                if (item) void applyMailListing(item)
+              }}
+              onRecruiterChange={setMailRecruiter}
+              onReplyToChange={setMailReplyTo}
+              onCompanyChange={setMailCompany}
+              onRoleChange={setMailRole}
+              onLocationChange={setMailLocation}
+              onJobUrlChange={setMailJobUrl}
+              onSubjectChange={(subject) => setMailReply((r) => ({ ...r, subject }))}
+              onBodyChange={(body) => setMailReply((r) => ({ ...r, body }))}
+              onParse={() => void applyMailParse(mailPaste)}
+              onSample={() => {
+                setMailPaste(SAMPLE_JOB_EMAIL)
+                void applyMailParse(SAMPLE_JOB_EMAIL)
+              }}
+              onFetch={() => void fetchMailInbox()}
+              onImport={() => void importMailFiles()}
+              onCompose={() => void composeMailReply()}
+              onTailor={() => void tailorFromMail()}
+              onOpenMail={() => void openMailReply()}
+              onSend={() => void sendMailReply()}
+              onAttachPdfChange={setMailAttachPdf}
+              onCopy={(kind) => {
+                void copyText(kind === 'subject' ? mailReply.subject : mailReply.body, kind)
+              }}
+              onOpenJob={() => {
+                if (!mailJobUrl.trim()) return
+                void window.resumeStudio.openExternal(mailJobUrl).catch((err) => {
+                  pushChat('assistant', err instanceof Error ? err.message : String(err))
+                })
+              }}
+              onOpenSettings={() => setSettingsOpen(true)}
+              onNewMail={startStandaloneMail}
+              onRevealPdf={
+                mailPdfPath
+                  ? () => {
+                      void window.resumeStudio.showItemInFolder(mailPdfPath)
+                    }
+                  : undefined
+              }
+            />
+          }
           focusTracker={focusTracker}
           focusRoles={focusRoles}
           focusEvidence={focusEvidence}
+          focusPing={focusPing}
+          focusMail={focusMail}
           mode={inspectorView}
           onModeChange={(m) => {
             setInspectorView(m)
@@ -2004,7 +2920,7 @@ export default function App() {
               label={inspectorOpen ? 'Collapse panel' : 'Expand panel'}
               shortcut="Ctrl+J"
               onClick={() => setInspectorOpen((v) => !v)}
-              placement="top"
+              placement="left"
             />
           }
         />
@@ -2093,6 +3009,18 @@ export default function App() {
                   role: edit.meta.role || '',
                   sourceRel: edit.createRel,
                   focusTracker: edit.meta.focusTracker === '1',
+                  channel:
+                    edit.meta.channel === 'whatsapp'
+                      ? 'whatsapp'
+                      : edit.meta.channel === 'email'
+                        ? 'email'
+                        : 'studio',
+                  recruiter: edit.meta.recruiter,
+                  phone: edit.meta.phone,
+                  replyTo: edit.meta.replyTo,
+                  mailSource: edit.meta.mailSource,
+                  packet: parsePacketMeta(edit.meta.packet),
+                  reply: parseMailReplyMeta(edit.meta.reply),
                 })
               }
 

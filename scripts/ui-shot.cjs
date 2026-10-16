@@ -12,7 +12,7 @@ const path = require('node:path')
 const ROOT = path.join(os.tmpdir(), 'rs-ui-shot')
 const WORKSPACE = path.join(ROOT, 'workspace')
 const USER_DATA = path.join(ROOT, 'user-data')
-const OUT = path.join(process.cwd(), '.ui-shots')
+const OUT = process.env.UI_SHOT_OUT || path.join(process.cwd(), '.ui-shots')
 const PRELOAD = path.join(ROOT, 'preload.js')
 
 const RESUME = `# Priya Raghunathan
@@ -122,11 +122,9 @@ app.setPath('userData', USER_DATA)
 
 ipcMain.handle('settings:get', () => ({
   provider: 'nvidia',
-  model: 'nvidia/nemotron-3-nano-30b-a3b',
+  model: 'openai/gpt-oss-20b',
   lastWorkspace: WORKSPACE,
-  hasNvidia: true,
-  hasGroq: false,
-  hasCursor: false,
+  ollamaBaseUrl: 'http://127.0.0.1:11434/v1',
   hasOpenAI: false,
   hasAnthropic: false,
   hasGemini: false,
@@ -141,16 +139,18 @@ ipcMain.handle('settings:get', () => ({
 ipcMain.handle('settings:set', () => true)
 ipcMain.handle('settings:getSecrets', () => ({
   provider: 'nvidia',
-  model: 'nvidia/nemotron-3-nano-30b-a3b',
-  nvidiaKey: '',
-  groqKey: '',
-  cursorKey: '',
+  model: 'openai/gpt-oss-20b',
+  ollamaBaseUrl: 'http://127.0.0.1:11434/v1',
   openaiKey: '',
   anthropicKey: '',
   geminiKey: '',
   bedrockKey: '',
   awsRegion: 'us-east-1',
 }))
+ipcMain.handle('ollama:listModels', () => [
+  { name: 'llama3.2:latest', size: 2_000_000_000 },
+  { name: 'deepseek-r1:1.5b', size: 1_100_000_000 },
+])
 ipcMain.handle('workspace:list', () => tree())
 ipcMain.handle('workspace:readFile', (_e, filePath) => fs.readFileSync(filePath, 'utf8'))
 ipcMain.handle('workspace:writeFile', () => true)
@@ -214,6 +214,27 @@ app.whenReady().then(async () => {
   `)
   await wait(1000)
   await shoot('04-scan-canvas')
+
+  await win.webContents.executeJavaScript(`
+    (function () {
+      const segs = [...document.querySelectorAll('.segmented-item')];
+      const edit = segs.find((s) => (s.textContent || '').trim() === 'Edit');
+      if (edit) edit.click();
+      const pingBtn = document.querySelectorAll('.rail.right .rail-btn')[3];
+      if (pingBtn) pingBtn.click();
+    })();
+  `)
+  await wait(700)
+  await win.webContents.executeJavaScript(`
+    (function () {
+      const sample = [...document.querySelectorAll('button')].find((b) =>
+        /Load sample/i.test(b.textContent || ''),
+      );
+      if (sample) sample.click();
+    })();
+  `)
+  await wait(800)
+  await shoot('06-whatsapp-desk')
 
   await win.webContents.executeJavaScript(`
     (function () {

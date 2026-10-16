@@ -74,12 +74,6 @@ export async function assertProductAwsIdentity(args: {
     fail('Those AWS keys did not return an account id.')
   }
 
-  if (PRODUCT_AWS.forbiddenAccountIds.includes(identity.account)) {
-    fail(
-      `Refusing to call AWS account ${identity.account}. Use keys from your own Bedrock account.`,
-    )
-  }
-
   const expected = args.expectedAccountId?.trim()
   if (expected && identity.account !== expected) {
     fail(

@@ -70,12 +70,12 @@ copyRecursive(distElectron, path.join(appPayload, 'dist-electron'))
 fs.writeFileSync(
   path.join(appDir, 'README.txt'),
   `Resume Studio ${version}
-Free · Bring your own API key
+Free · NVIDIA included
 
 1. Unzip this folder anywhere.
 2. Run "Resume Studio.exe".
-3. Open Settings and add your OpenAI, Anthropic, or Gemini API key.
-4. Open a workspace folder and start tailoring.
+3. Open Settings. NVIDIA NIM is ready with no key. Or choose Ollama, or paste your own OpenAI, Anthropic, Gemini, or Bedrock key.
+4. Open a workspace folder and start tailoring. Mail and WhatsApp desks are in the side panel.
 
 Windows may warn about an unsigned app — choose More info → Run anyway.
 `,

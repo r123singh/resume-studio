@@ -98,10 +98,29 @@ export function buildApplyKitParts(markdown: string, fallbacks?: {
   }
 }
 
-export function buildChecklistMarkdown(parts: ApplyKitParts): string {
+export function buildChecklistMarkdown(
+  parts: ApplyKitParts,
+  extras?: { whatsapp?: boolean; email?: boolean },
+): string {
+  const channelStep = extras?.whatsapp
+    ? `3. Open \`whatsapp-ping.md\`, send the ping on WhatsApp, and attach \`resume.pdf\`.\n4. Paste cover letter from \`cover-letter.md\` only if an ATS field asks for it.\n5. Use \`form-snippets.md\` for "Why this role", AI tools, work auth, etc.\n6. Fill salary / work authorization yourself — do not invent answers.\n7. After the recruiter confirms, mark this application as **applied** in \`applications.csv\`.`
+    : extras?.email
+      ? `3. Open the Mail inbox desk, click **Send reply**, and attach \`resume.pdf\` (or send from your mail client using \`reply-email.md\`).\n4. Paste cover letter from \`cover-letter.md\` only if an ATS field asks for it.\n5. Use \`form-snippets.md\` for "Why this role", AI tools, work auth, etc.\n6. Fill salary / work authorization yourself — do not invent answers.\n7. After you hit send, mark this application as **applied** in \`applications.csv\`.`
+    : `3. Attach \`resume.pdf\` (or paste from \`resume.md\`).
+4. Paste cover letter from \`cover-letter.md\` if the ATS has a field.
+5. Use \`form-snippets.md\` for "Why this role", AI tools, work auth, etc.
+6. Fill salary / work authorization yourself — do not invent answers.
+7. Submit, then mark this application as **applied** in \`applications.csv\`.`
+
+  const statusLabel = extras?.whatsapp
+    ? 'WhatsApp ping'
+    : extras?.email
+      ? 'email reply'
+      : 'manual ATS submit'
+
   return `# Apply checklist — ${parts.company} / ${parts.role}
 
-Status: **ready-to-apply** (manual ATS submit)
+Status: **ready-to-apply** (${statusLabel})
 
 ## Links
 - Job URL: ${parts.jobUrl || '_add job_url to resume frontmatter_'}
@@ -109,19 +128,16 @@ Status: **ready-to-apply** (manual ATS submit)
 - Location: ${parts.location || 'n/a'}
 
 ## Steps
-1. Open the job URL in your browser.
-2. Attach \`resume.pdf\` (or paste from \`resume.md\`).
-3. Paste cover letter from \`cover-letter.md\` if the ATS has a field.
-4. Use \`form-snippets.md\` for "Why this role", AI tools, work auth, etc.
-5. Fill salary / work authorization yourself — do not invent answers.
-6. Submit, then mark this application as **applied** in \`applications.csv\`.
+1. Open the job URL in your browser (if any).
+2. Review \`resume.pdf\`.
+${channelStep}
 
 ## Kit files
 - \`resume.md\` — clean resume (no cover letter / snippets)
-- \`resume.pdf\` — PDF for upload
+- \`resume.pdf\` — PDF for upload, WhatsApp, or email attach
 - \`cover-letter.md\`
 - \`form-snippets.md\`
-- \`CHECKLIST.md\` — this file
+${extras?.whatsapp ? '- `whatsapp-ping.md` — phone-length ping, why-fit, 48h bump\n' : ''}${extras?.email ? '- `reply-email.md` — subject + body for the recruiter thread\n' : ''}- \`CHECKLIST.md\` — this file
 `
 }
 

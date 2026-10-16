@@ -101,6 +101,20 @@ npm run aws:verify
 
 Then in the app, run one short Edit-tab prompt. If the profile still points at Flytxt, the app throws instead of billing that account.
 
+## Bedrock: `Operation not allowed` (Playground + CLI)
+
+If **every** model fails in the **Bedrock Playground** and CLI with
+`ValidationException: Operation not allowed`, the product account’s **runtime
+invoke path is blocked by AWS** (model access agreements, billing/Marketplace
+eligibility, or a new-account hold)—not by Resume Studio or desktop IAM alone.
+
+```powershell
+npm run aws:bedrock-diagnose
+```
+
+Use the support-case template in [`bedrock-unblock-support-case.md`](./bedrock-unblock-support-case.md).
+The desktop does not offer the managed account. Direct Bedrock in Settings stays optional and will not work until AWS clears the account.
+
 ## Environments
 
 | Stack | Parameter `Environment` | IAM user |

@@ -5,8 +5,7 @@
  */
 export type ProviderId =
   | 'nvidia'
-  | 'groq'
-  | 'cursor'
+  | 'ollama'
   | 'openai'
   | 'anthropic'
   | 'gemini'

@@ -1,13 +1,16 @@
-# Publish GitHub release for Resume Studio v1.0.0
-# Requires: gh auth login, working DNS to github.com
+# Publish the GitHub release for the version in package.json.
+# Requires: gh auth login, and DNS that can resolve github.com.
 
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
 
-$asset = Join-Path $root "artifacts\Resume-Studio-win-x64-1.0.0.rsz"
+$pkg = Get-Content (Join-Path $root "package.json") -Raw | ConvertFrom-Json
+$version = $pkg.version
+$assetName = "Resume-Studio-win-x64-$version.rsz"
+$asset = Join-Path $root "artifacts\$assetName"
 if (-not (Test-Path $asset)) {
-  throw "Missing $asset - run npm run pack:release / node scripts/make-zip.mjs first"
+  throw "Missing $asset - run npm run pack:release first"
 }
 
 if (-not (Get-Command gh -ErrorAction SilentlyContinue)) {
@@ -21,10 +24,10 @@ if ($remotes -notcontains "origin") {
   git push -u origin HEAD
 }
 
-gh release create v1.0.0 $asset `
-  --title "Resume Studio v1.0.0" `
+gh release create "v$version" $asset `
+  --title "Resume Studio v$version" `
   --notes-file (Join-Path $root "RELEASE_NOTES.md") `
   --clobber
 
-Write-Host "Release URL: https://github.com/r123singh/resume-studio/releases/tag/v1.0.0"
-Write-Host "Download: https://github.com/r123singh/resume-studio/releases/download/v1.0.0/Resume-Studio-win-x64-1.0.0.rsz"
+Write-Host "Release URL: https://github.com/r123singh/resume-studio/releases/tag/v$version"
+Write-Host "Download: https://github.com/r123singh/resume-studio/releases/download/v$version/$assetName"

@@ -5,7 +5,7 @@ import { useEffect, useRef, useState } from 'react'
 import { FileText, Sparkles, X } from 'lucide-react'
 import { EmptyState } from './ui/EmptyState'
 import { RecruiterLens } from './RecruiterLens'
-import { analyzeRecruiterLens, type LensMode } from '../lib/recruiter-lens'
+import { analyzeRecruiterLens, isResumeDocument, type LensMode } from '../lib/recruiter-lens'
 import { achievementSnippetTemplate } from '../lib/achievements'
 
 export type EditorTab = {
@@ -34,7 +34,7 @@ type Props = {
   onMount: (editor: MonacoEditor.IStandaloneCodeEditor) => void
   onGhostAccept?: () => void
   onGhostDismiss?: () => void
-  onAiAction?: (instruction: string) => void
+  onAiAction?: (instruction: string, selectedText: string) => void
 }
 
 /** Contextual rewrite actions, surfaced next to the selection instead of a global "AI" button. */
@@ -90,6 +90,7 @@ export function EditorPane({
   const completionDisposable = useRef<monaco.IDisposable | null>(null)
   const inlineDisposable = useRef<monaco.IDisposable | null>(null)
   const ghostRef = useRef('')
+  const lastSelection = useRef('')
 
   useEffect(() => {
     let cancelled = false
@@ -129,6 +130,10 @@ export function EditorPane({
     const ed = editorInstance.current
     const model = ed?.getModel()
     if (!model || !relativePath) return
+    if (!isResumeDocument(relativePath)) {
+      monaco.editor.setModelMarkers(model, MARKER_OWNER, [])
+      return
+    }
 
     const report = analyzeRecruiterLens(content, jobDescription)
     const markers: monaco.editor.IMarkerData[] = report.hierarchy.map((issue) => {
@@ -148,7 +153,8 @@ export function EditorPane({
     monaco.editor.setModelMarkers(model, MARKER_OWNER, markers)
   }, [content, jobDescription, relativePath, ready])
 
-  const showEditor = lensMode === 'edit'
+  const resumeFile = isResumeDocument(relativePath)
+  const showEditor = !resumeFile || lensMode === 'edit'
 
   return (
     <section className="editor-pane">
@@ -201,7 +207,7 @@ export function EditorPane({
           </span>
         </div>
       )}
-      {relativePath ? (
+      {resumeFile ? (
         <RecruiterLens
           content={content}
           jobDescription={jobDescription}
@@ -256,7 +262,11 @@ export function EditorPane({
                   disabled={aiBusy}
                   onMouseDown={(e) => e.preventDefault()}
                   onClick={() => {
-                    onAiAction(action.instruction)
+                    const model = editorInstance.current?.getModel()
+                    const sel = editorInstance.current?.getSelection()
+                    const live =
+                      model && sel && !sel.isEmpty() ? model.getValueInRange(sel).trim() : ''
+                    onAiAction(action.instruction, live || lastSelection.current.trim())
                     setActionBar(null)
                   }}
                 >
@@ -303,6 +313,7 @@ export function EditorPane({
                     return
                   }
                   const text = model.getValueInRange(sel)
+                  if (text.trim()) lastSelection.current = text
                   onSelectionChange(text)
 
                   // Anchor the action bar just above the selection start.

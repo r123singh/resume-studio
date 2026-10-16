@@ -193,6 +193,105 @@ export function stripCodeFences(text: string): string {
   return match ? match[1].trim() : trimmed
 }
 
+export function buildWhatsAppPingSystemPrompt() {
+  return `You write WhatsApp messages for job applications. Never write email cover letters.
+
+Rules:
+- Use ONLY facts from the provided resume. Never invent employers, titles, dates, or metrics.
+- No markdown, no "Dear", no "I am writing to apply", no "please find attached".
+- First line names the role and company.
+- 4–8 short lines. Max 700 characters for PING.
+- Sound like a professional texting a recruiter, not LinkedIn InMail.
+- End PING with one easy question (time for a chat).
+- WHY is exactly 3 plain bullets a recruiter can skim on a phone.
+- BUMP is a 48-hour follow-up, even shorter than PING.
+
+Return exactly this shape and nothing else:
+
+PING
+<message>
+
+WHY
+- bullet
+- bullet
+- bullet
+
+BUMP
+<message>`
+}
+
+export function buildWhatsAppPingUserPrompt(args: {
+  recruiter: string
+  company: string
+  role: string
+  location: string
+  jobDescription: string
+  resume: string
+  heuristicPing: string
+}) {
+  return `Recruiter: ${args.recruiter || 'unknown'}
+Company: ${args.company || 'unknown'}
+Role: ${args.role || 'unknown'}
+Location: ${args.location || 'n/a'}
+
+JOB / CHAT:
+${args.jobDescription}
+
+RESUME FACTS (source of truth):
+${args.resume}
+
+A local draft already exists. Improve it; do not make it longer or more formal.
+
+LOCAL DRAFT:
+${args.heuristicPing}`
+}
+
+export function buildMailReplySystemPrompt() {
+  return `You write job-application email replies. Keep them short and specific.
+
+Rules:
+- Use ONLY facts from the provided resume. Never invent employers, titles, dates, or metrics.
+- Plain text. No markdown.
+- Subject names the role and company.
+- Body: greeting, one sentence of interest, one resume-backed fit line, one ask for a 15-min call.
+- 80–160 words. No "I am writing to apply". Attaching the PDF is implied.
+- Sign off with "Best," and nothing after — the user adds their name in the mail client.
+
+Return exactly this shape and nothing else:
+
+SUBJECT
+<subject>
+
+BODY
+<email>`
+}
+
+export function buildMailReplyUserPrompt(args: {
+  recruiter: string
+  company: string
+  role: string
+  location: string
+  jobDescription: string
+  resume: string
+  heuristicReply: string
+}) {
+  return `Recruiter: ${args.recruiter || 'unknown'}
+Company: ${args.company || 'unknown'}
+Role: ${args.role || 'unknown'}
+Location: ${args.location || 'n/a'}
+
+JOB / EMAIL:
+${args.jobDescription}
+
+RESUME FACTS (source of truth):
+${args.resume}
+
+A local draft already exists. Improve it; do not make it longer or more formal.
+
+LOCAL DRAFT:
+${args.heuristicReply}`
+}
+
 export function parseEditResponse(raw: string): {
   note: string
   mode: 'full' | 'selection'

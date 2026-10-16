@@ -164,6 +164,22 @@ select {
   width: 100%;
 }
 
+.ollama-model-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.ollama-model-row select {
+  flex: 1;
+  min-width: 0;
+}
+
+.ollama-model-row .btn {
+  flex-shrink: 0;
+}
+
 /* ============================== TOP BAR ============================== */
 
 .topbar {
@@ -448,6 +464,19 @@ html[data-platform='darwin'] .topbar-lead {
   bottom: calc(100% + 6px);
 }
 
+.tooltip-bubble.left {
+  top: 50%;
+  left: auto;
+  right: calc(100% + 8px);
+  transform: translateY(-50%);
+}
+
+.tooltip-bubble.right {
+  top: 50%;
+  left: calc(100% + 8px);
+  transform: translateY(-50%);
+}
+
 .tooltip-bubble kbd {
   margin-left: var(--space-2);
   padding: 1px 4px;
@@ -556,6 +585,8 @@ html[data-platform='darwin'] .topbar-lead {
 }
 
 .rail {
+  position: relative;
+  z-index: var(--z-sticky);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -563,7 +594,7 @@ html[data-platform='darwin'] .topbar-lead {
   padding: 4px 0;
   background: var(--surface);
   border-right: 1px solid var(--border);
-  overflow: hidden;
+  overflow: visible;
 }
 
 .rail.right {
@@ -573,6 +604,12 @@ html[data-platform='darwin'] .topbar-lead {
 
 .rail-spacer {
   flex: 1;
+}
+
+.rail .tooltip-host {
+  width: 48px;
+  display: flex;
+  justify-content: center;
 }
 
 .rail-btn {
@@ -2982,4 +3019,155 @@ label {
   .command-trigger {
     min-width: 0;
   }
+}
+
+/* WhatsApp Recruiter Desk */
+.ping-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.ping-lede {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-muted, var(--muted));
+}
+
+.ping-label {
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.ping-panel textarea,
+.ping-panel input,
+.ping-fields input {
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface-inset);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  resize: vertical;
+}
+
+.ping-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.ping-actions.wrap .btn {
+  padding: 6px 8px;
+  font-size: 12px;
+}
+
+.ping-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.ping-skim {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px;
+  background: var(--surface-hover);
+}
+
+.ping-skim-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+}
+
+.ping-skim-top strong {
+  font-size: 22px;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.ping-skim-top strong.ok {
+  color: var(--success);
+}
+
+.ping-skim-top strong.mid {
+  color: var(--accent);
+}
+
+.ping-skim-top strong.low {
+  color: var(--error);
+}
+
+.ping-skim-bar {
+  height: 4px;
+  margin-top: 8px;
+  background: var(--border);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.ping-skim-bar span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+
+.ping-skim-meta,
+.ping-skim-ok,
+.ping-kit-hint {
+  margin: 6px 0 0;
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.ping-issues {
+  margin: 8px 0 0;
+  padding-left: 16px;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--muted);
+}
+
+.ping-issues .block {
+  color: var(--error);
+}
+
+.mail-list {
+  max-height: 220px;
+  overflow: auto;
+}
+
+button.mail-card {
+  display: block;
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+button.mail-card:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.mail-attach {
+  margin: 4px 0 0;
+  font-size: 12px;
+}
+
+.btn.mail-mode-active {
+  border-color: var(--accent);
+  color: var(--accent);
 }

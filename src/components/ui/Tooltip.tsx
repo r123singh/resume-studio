@@ -3,7 +3,7 @@ import { useId, useState, type ReactNode } from 'react'
 type Props = {
   label: string
   shortcut?: string
-  placement?: 'top' | 'bottom'
+  placement?: 'top' | 'bottom' | 'left' | 'right'
   children: ReactNode
 }
 

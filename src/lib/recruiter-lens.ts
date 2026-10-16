@@ -2,6 +2,22 @@ import { parseFrontmatter } from './apply-kit'
 
 export type LensMode = 'edit' | 'ats' | 'scan'
 
+/**
+ * Recruiter Lens applies to resume documents only: the master resume, tailored
+ * copies, role variants, and the resume inside an apply kit.
+ */
+export function isResumeDocument(relativePath: string | null | undefined): boolean {
+  if (!relativePath) return false
+  const rel = relativePath.replace(/\\/g, '/').replace(/^\/+/, '')
+  const lower = rel.toLowerCase()
+  const base = lower.split('/').pop() || ''
+  if (base === 'base-resume.md') return true
+  if (lower.startsWith('resumes/') && base.endsWith('.md')) return true
+  if (lower.startsWith('variants/') && base.endsWith('.md')) return true
+  if (lower.startsWith('apply-kits/') && base === 'resume.md') return true
+  return false
+}
+
 export type LensIssue = {
   id: string
   severity: 'error' | 'warn' | 'info'
