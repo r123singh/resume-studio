@@ -24,15 +24,38 @@ const appDir = path.join(portableRoot, 'Resume Studio')
 fs.rmSync(portableRoot, { recursive: true, force: true })
 fs.mkdirSync(path.join(appDir, 'resources', 'app'), { recursive: true })
 
-function copyRecursive(src, dest) {
+const SKIP_DIR = new Set([
+  '.bin',
+  '.github',
+  '.git',
+  'docs',
+  'doc',
+  'example',
+  'examples',
+  'test',
+  'tests',
+  '__tests__',
+])
+
+function copyRecursive(src, dest, skipNestedNodeModules = false) {
   const st = fs.statSync(src)
   if (st.isDirectory()) {
     fs.mkdirSync(dest, { recursive: true })
     for (const name of fs.readdirSync(src)) {
-      copyRecursive(path.join(src, name), path.join(dest, name))
+      if (SKIP_DIR.has(name)) continue
+      if (skipNestedNodeModules && name === 'node_modules') continue
+      copyRecursive(path.join(src, name), path.join(dest, name), skipNestedNodeModules)
     }
   } else {
-    fs.copyFileSync(src, dest)
+    try {
+      fs.copyFileSync(src, dest)
+    } catch (err) {
+      if (err && (err.code === 'EPERM' || err.code === 'EACCES')) {
+        console.warn(`skip unreadable ${src}`)
+        return
+      }
+      throw err
+    }
   }
 }
 
@@ -66,6 +89,60 @@ const appPkg = {
 fs.writeFileSync(path.join(appPayload, 'package.json'), JSON.stringify(appPkg, null, 2))
 copyRecursive(dist, path.join(appPayload, 'dist'))
 copyRecursive(distElectron, path.join(appPayload, 'dist-electron'))
+
+// Vite leaves these packages external in the CJS main bundle. Copy them (and
+// their transitive deps) so the portable app can resolve require('zod') etc.
+const RUNTIME_PACKAGES = [
+  'zod',
+  '@strands-agents/sdk',
+  '@aws-sdk/client-sts',
+  '@aws-sdk/credential-provider-ini',
+  '@aws-sdk/client-bedrock-runtime',
+  '@anthropic-ai/sdk',
+  '@google/genai',
+  'openai',
+]
+
+function resolvePackageDir(name, fromDir) {
+  let dir = fromDir
+  while (true) {
+    const candidate = path.join(dir, 'node_modules', ...name.split('/'), 'package.json')
+    if (fs.existsSync(candidate)) return path.dirname(candidate)
+    const parent = path.dirname(dir)
+    if (parent === dir) return null
+    dir = parent
+  }
+}
+
+function copyRuntimePackage(name, destNodeModules, fromDir, seen) {
+  if (name === 'electron') return
+  const src = resolvePackageDir(name, fromDir)
+  if (!src) {
+    console.warn(`skip missing runtime package ${name}`)
+    return
+  }
+  if (seen.has(src)) return
+  seen.add(src)
+  const dest = path.join(destNodeModules, ...name.split('/'))
+  copyRecursive(src, dest, true)
+  const pkgJson = JSON.parse(fs.readFileSync(path.join(src, 'package.json'), 'utf8'))
+  for (const dep of Object.keys(pkgJson.dependencies || {})) {
+    copyRuntimePackage(dep, destNodeModules, src, seen)
+  }
+}
+
+const destNodeModules = path.join(appPayload, 'node_modules')
+const copied = new Set()
+for (const name of RUNTIME_PACKAGES) {
+  copyRuntimePackage(name, destNodeModules, root, copied)
+}
+console.log(`Copied ${copied.size} runtime packages into portable node_modules`)
+
+const { createRequire } = await import('node:module')
+const packedRequire = createRequire(path.join(appPayload, 'package.json'))
+for (const name of ['zod', '@strands-agents/sdk', '@aws-sdk/client-sts']) {
+  packedRequire.resolve(name)
+}
 
 fs.writeFileSync(
   path.join(appDir, 'README.txt'),

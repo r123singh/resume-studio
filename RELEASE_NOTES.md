@@ -1,24 +1,16 @@
 # Resume Studio release notes
 
-## v1.1.0
+## v1.1.1
 
-Public Windows build of the apply workspace: tailor, apply kit, tracker, job hunt, recruiter mail, WhatsApp, evidence-backed edits, and agent mode.
+Fixes the portable Windows build that crashed on launch with `Cannot find module 'zod'`. The app now ships the Electron main-process packages it needs (`zod`, Strands, and the AWS / model SDKs).
 
-### Included
-
-- Tailor from a job description, chat edit, and PDF export
-- Apply kit, application tracker, and RemoteOK + Remotive hunt
-- Mail inbox (IMAP fetch, .eml import, paste, SMTP send after you confirm)
-- WhatsApp recruiter desk (local parse, open WhatsApp with a short ping)
-- Evidence-backed tailor and Strands agent mode (edits wait for your diff)
-- Interview prep, Recruiter Lens, role variants
-- NVIDIA NIM included. Ollama local. Optional OpenAI, Anthropic, Gemini, and Bedrock keys
+Everything from v1.1.0 is included: tailor, apply kit, tracker, hunt, mail, WhatsApp, evidence, and agent mode. NVIDIA NIM is included.
 
 ### Artifact
 
-- File: `artifacts/Resume-Studio-win-x64-1.1.0.rsz` (~277 MB)
+- File: `artifacts/Resume-Studio-win-x64-1.1.1.rsz` (~344 MB)
 - Format: standard ZIP stored as `.rsz` (rename to `.zip` to extract)
-- SHA256: `DA60DECE93F8D7BE939E3F6E0345C595B120B6AB5C7A6A56A040C09FC7D6C5F8`
+- SHA256: `4D2B604AEB74E760CA7243914A202779A6FAB708EB92D5FD75A63596369A939C`
 
 ### Install
 
