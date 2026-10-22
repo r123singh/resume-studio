@@ -1,16 +1,16 @@
 # Resume Studio release notes
 
-## v1.1.1
+## v1.1.2
 
-Fixes the portable Windows build that crashed on launch with `Cannot find module 'zod'`. The app now ships the Electron main-process packages it needs (`zod`, Strands, and the AWS / model SDKs).
+Fixes agent mode in the portable Windows build. v1.1.1 launched, then failed on `agent:run` because `@modelcontextprotocol/sdk` was not shipped with `@strands-agents/sdk`.
 
-Everything from v1.1.0 is included: tailor, apply kit, tracker, hunt, mail, WhatsApp, evidence, and agent mode. NVIDIA NIM is included.
+The pack now copies installed peer dependencies and imports the Strands Node entry before the zip is built.
 
 ### Artifact
 
-- File: `artifacts/Resume-Studio-win-x64-1.1.1.rsz` (~344 MB)
+- File: `artifacts/Resume-Studio-win-x64-1.1.2.rsz` (~354 MB)
 - Format: standard ZIP stored as `.rsz` (rename to `.zip` to extract)
-- SHA256: `4D2B604AEB74E760CA7243914A202779A6FAB708EB92D5FD75A63596369A939C`
+- SHA256: `CA634144BB317E4C0AA16A65A7BE40AD4FC1AF4FB8E0EB90981E82B9E36344EE`
 
 ### Install
 

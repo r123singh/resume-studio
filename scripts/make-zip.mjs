@@ -6,15 +6,18 @@ import { fileURLToPath } from 'node:url'
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'))
 const version = pkg.version
-const appDir = path.join(root, 'release', 'portable', 'Resume Studio')
+const appDir = [
+  path.join(root, 'artifacts', 'staging', 'Resume Studio'),
+  path.join(root, 'release', 'portable', 'Resume Studio'),
+].find((dir) => fs.existsSync(path.join(dir, 'Resume Studio.exe')))
+if (!appDir) {
+  console.error('Missing portable app. Run: npm run build && node scripts/pack-portable.mjs')
+  process.exit(1)
+}
 const outDir = path.join(root, 'artifacts')
 const zipName = `Resume-Studio-win-x64-${version}.rsz`
 const zipPath = path.join(outDir, zipName)
 
-if (!fs.existsSync(path.join(appDir, 'Resume Studio.exe'))) {
-  console.error('Missing portable app. Run: npm run build && node scripts/pack-portable.mjs (zip step may fail; app folder is enough)')
-  process.exit(1)
-}
 
 function walk(dir, base = dir) {
   const out = []

@@ -19,7 +19,7 @@ if (!fs.existsSync(dist) || !fs.existsSync(distElectron)) {
   process.exit(1)
 }
 
-const portableRoot = path.join(root, 'release', 'portable')
+const portableRoot = path.join(root, 'artifacts', 'staging')
 const appDir = path.join(portableRoot, 'Resume Studio')
 fs.rmSync(portableRoot, { recursive: true, force: true })
 fs.mkdirSync(path.join(appDir, 'resources', 'app'), { recursive: true })
@@ -47,24 +47,58 @@ function copyRecursive(src, dest, skipNestedNodeModules = false) {
       copyRecursive(path.join(src, name), path.join(dest, name), skipNestedNodeModules)
     }
   } else {
-    try {
-      fs.copyFileSync(src, dest)
-    } catch (err) {
-      if (err && (err.code === 'EPERM' || err.code === 'EACCES')) {
-        console.warn(`skip unreadable ${src}`)
+    let lastErr
+    for (let i = 0; i < 8; i++) {
+      try {
+        fs.copyFileSync(src, dest)
         return
+      } catch (err) {
+        lastErr = err
+        if (!err || (err.code !== 'EPERM' && err.code !== 'EACCES' && err.code !== 'EBUSY')) throw err
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 400)
       }
-      throw err
     }
+    if (path.basename(src) === 'electron.exe') throw lastErr
+    console.warn(`skip unreadable ${src}`)
   }
 }
 
 // Copy Electron runtime
+const destExe = path.join(appDir, 'Resume Studio.exe')
 for (const name of fs.readdirSync(electronDist)) {
   if (name === 'resources') continue
   const src = path.join(electronDist, name)
   const destName = name === 'electron.exe' ? 'Resume Studio.exe' : name
-  copyRecursive(src, path.join(appDir, destName))
+  try {
+    if (name === 'electron.exe') {
+      const tmpExe = path.join(root, 'artifacts', 'electron-runtime.exe')
+      fs.mkdirSync(path.dirname(tmpExe), { recursive: true })
+      if (!exeLooksComplete(tmpExe)) copyRecursive(src, tmpExe)
+      copyRecursive(tmpExe, path.join(appDir, destName))
+    } else {
+      copyRecursive(src, path.join(appDir, destName))
+    }
+  } catch (err) {
+    if (name !== 'electron.exe') throw err
+    console.warn(`electron.exe copy failed (${err.code}); using previous portable exe`)
+  }
+}
+function exeLooksComplete(file) {
+  try {
+    return fs.statSync(file).size > 1_000_000
+  } catch {
+    return false
+  }
+}
+if (!exeLooksComplete(destExe)) {
+  const fallbacks = [
+    path.join(root, 'artifacts', 'electron-runtime.exe'),
+    path.join(root, 'release', 'electron-runtime.exe'),
+    path.join(root, 'release', 'portable.bak', 'Resume Studio', 'Resume Studio.exe'),
+  ]
+  const bakExe = fallbacks.find((p) => exeLooksComplete(p))
+  if (!bakExe) throw new Error('Failed to copy electron.exe into the portable app.')
+  copyRecursive(bakExe, destExe)
 }
 
 // Default Electron resources (icudtl, locales, etc. under resources)
@@ -95,6 +129,7 @@ copyRecursive(distElectron, path.join(appPayload, 'dist-electron'))
 const RUNTIME_PACKAGES = [
   'zod',
   '@strands-agents/sdk',
+  '@modelcontextprotocol/sdk',
   '@aws-sdk/client-sts',
   '@aws-sdk/credential-provider-ini',
   '@aws-sdk/client-bedrock-runtime',
@@ -126,7 +161,11 @@ function copyRuntimePackage(name, destNodeModules, fromDir, seen) {
   const dest = path.join(destNodeModules, ...name.split('/'))
   copyRecursive(src, dest, true)
   const pkgJson = JSON.parse(fs.readFileSync(path.join(src, 'package.json'), 'utf8'))
-  for (const dep of Object.keys(pkgJson.dependencies || {})) {
+  const next = {
+    ...pkgJson.dependencies,
+    ...pkgJson.peerDependencies,
+  }
+  for (const dep of Object.keys(next)) {
     copyRuntimePackage(dep, destNodeModules, src, seen)
   }
 }
@@ -139,9 +178,38 @@ for (const name of RUNTIME_PACKAGES) {
 console.log(`Copied ${copied.size} runtime packages into portable node_modules`)
 
 const { createRequire } = await import('node:module')
+const { pathToFileURL } = await import('node:url')
 const packedRequire = createRequire(path.join(appPayload, 'package.json'))
 for (const name of ['zod', '@strands-agents/sdk', '@aws-sdk/client-sts']) {
   packedRequire.resolve(name)
+}
+packedRequire.resolve('@modelcontextprotocol/sdk/package.json')
+
+function missingPackageName(err) {
+  const text = String(err?.message || err)
+  return text.match(/Cannot find package '([^']+)'/)?.[1] ?? null
+}
+
+const strandsEntry = path.join(
+  destNodeModules,
+  '@strands-agents',
+  'sdk',
+  'dist',
+  'src',
+  'index.node.js',
+)
+for (let attempt = 0; attempt < 15; attempt++) {
+  try {
+    await import(pathToFileURL(strandsEntry).href)
+    break
+  } catch (err) {
+    const missing = missingPackageName(err)
+    if (!missing) throw err
+    console.warn(`packed import missing ${missing}; copying`)
+    const before = copied.size
+    copyRuntimePackage(missing, destNodeModules, root, copied)
+    if (copied.size === before) throw err
+  }
 }
 
 fs.writeFileSync(

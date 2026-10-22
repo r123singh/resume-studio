@@ -6,16 +6,16 @@ Public download is the GitHub Release asset. The marketing site reads that URL f
 
 | Item | Path |
 |------|------|
-| Version | 1.1.1 |
-| Portable app folder | `D:\MyProjects\resume-studio\release\portable\Resume Studio\` |
-| Download artifact | `D:\MyProjects\resume-studio\artifacts\Resume-Studio-win-x64-1.1.1.rsz` |
-| SHA256 | `4D2B604AEB74E760CA7243914A202779A6FAB708EB92D5FD75A63596369A939C` |
+| Version | 1.1.2 |
+| Portable app folder | `D:\MyProjects\resume-studio\artifacts\staging\Resume Studio\` |
+| Download artifact | `D:\MyProjects\resume-studio\artifacts\Resume-Studio-win-x64-1.1.2.rsz` |
+| SHA256 | `CA634144BB317E4C0AA16A65A7BE40AD4FC1AF4FB8E0EB90981E82B9E36344EE` |
 | Marketing site | https://resume-studio-web-seven.vercel.app/ |
 | LinkedIn kit | `D:\MyProjects\resume-studio-web\LINKEDIN.md` |
 
 Download URL:
 
-`https://github.com/r123singh/resume-studio/releases/download/v1.1.1/Resume-Studio-win-x64-1.1.1.rsz`
+`https://github.com/r123singh/resume-studio/releases/download/v1.1.2/Resume-Studio-win-x64-1.1.2.rsz`
 
 ## 1) Publish GitHub Release
 
